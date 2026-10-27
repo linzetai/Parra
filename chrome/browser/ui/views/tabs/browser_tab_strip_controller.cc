@@ -17,6 +17,7 @@
 #include "base/metrics/user_metrics.h"
 #include "build/build_config.h"
 #include "chrome/browser/favicon/favicon_utils.h"
+#include "chrome/browser/parra/parra_storage_partition_util.h"
 #include "chrome/browser/resource_coordinator/tab_lifecycle_unit_external.h"
 #include "chrome/browser/resource_coordinator/tab_lifecycle_unit_source.h"
 #include "chrome/browser/search/search.h"
@@ -183,6 +184,31 @@ void BrowserTabStripController::InitFromModel(TabStrip* tabstrip) {
 
   tabstrip_->StopAnimating();
 
+  // Parra: create this window's environment state and KEEP OWNERSHIP of it.
+  //
+  // This controller is constructed once per browser window and lives until that
+  // window's tab strip is destroyed, which is exactly the lifetime the state
+  // needs. Not created lazily at read time: a query that creates state makes the
+  // answer depend on which component happened to run first, and it would let the
+  // state be resurrected during teardown.
+  //
+  // CreateFor() returns null if a state already exists for this window, so a
+  // second controller cannot silently overwrite the first one's state.
+  if (parra::IsParraPocEnabled() && !parra_window_state_) {
+    parra_window_state_ =
+        parra::WindowEnvironmentState::CreateFor(browser_view_->browser());
+    if (!parra_window_state_) {
+      LOG(WARNING) << "parra-ui: this window already has environment state; "
+                      "reusing it rather than creating a second one";
+    }
+  }
+
+  // Parra: adopt the current environment as already applied, so the very first
+  // layout already filters, instead of briefly showing every environment's tabs.
+  parra_last_applied_environment_ =
+      parra::EnvironmentIndexMapper(model_).active_environment();
+  LogVisibilitySnapshot("init-from-model");
+
   if (GlassFrameService* service = GlassFrameService::GetInstance()) {
     glass_frame_service_subscription_ =
         service->RegisterGlassFrameEligibilityChangedCallback(
@@ -220,7 +246,122 @@ bool BrowserTabStripController::IsValidIndex(int index) const {
   return model_->ContainsIndex(index);
 }
 
-bool BrowserTabStripController::IsActiveTab(int model_index) const {
+// Parra: the environment filter.
+//
+// This is the single place where the visible tab strip learns that a tab
+// belongs to another environment. Everything else in the tab strip keeps
+// operating on model indices, which is what makes the change small: the model
+// still owns all nine tabs, it is only the answer to "should this one be on
+// screen" that changes.
+//
+// Returns true whenever Parra is inactive, so upstream behaviour is untouched.
+bool BrowserTabStripController::IsModelIndexVisible(int model_index) const {
+  if (!parra::IsParraPocEnabled())
+    return true;
+
+  // A tab that is not in the model cannot be shown, whatever the environment.
+  if (!model_->ContainsIndex(model_index))
+    return false;
+
+  // Pinned tabs get NO cross-environment privilege.
+  //
+  // Pinning is a "keep this around" statement about a tab, not a statement about
+  // which environment the user is looking at. A pinned tab keeps its environment
+  // tag, keeps its StoragePartition, and is hidden exactly like any other tab when
+  // its environment is not the active one. Making pinned tabs visible everywhere
+  // would leak another environment's title and favicon into the strip, which is
+  // the specific leak this phase exists to prevent.
+  const parra::EnvironmentIndexMapper mapper(model_);
+  return mapper.IsTabVisible(mapper.active_environment(), model_index);
+}
+
+void BrowserTabStripController::SyncEnvironmentFilterIfStale() {
+  if (!parra::IsParraPocEnabled())
+    return;
+
+  const std::string& active =
+      parra::EnvironmentIndexMapper(model_).active_environment();
+  if (active == parra_last_applied_environment_)
+    return;
+
+  // Record the new environment FIRST. A re-layout re-enters this class through
+  // ShouldTabBeVisible() -> IsModelIndexVisible(), and if the recorded value
+  // still looked stale that recursion would schedule another layout, forever.
+  const std::string previous = parra_last_applied_environment_;
+  parra_last_applied_environment_ = active;
+
+  LOG(INFO) << "parra-ui: refreshing tab strip visibility '" << previous
+            << "' -> '" << active << "' (no tab was created, moved or closed)";
+
+  if (tabstrip_) {
+    tabstrip_->InvalidateLayout();
+    tabstrip_->DeprecatedLayoutImmediately();
+  }
+
+  // Emitted right after the re-layout, so `view_visible_tabs` reflects the state
+  // the user is about to see rather than the state before the refresh.
+  LogVisibilitySnapshot("after-environment-change");
+}
+
+void BrowserTabStripController::LogVisibilitySnapshot(const char* reason) const {
+  if (!parra::IsParraPocEnabled() || !tabstrip_)
+    return;
+
+  const parra::EnvironmentIndexMapper mapper(model_);
+  int visible = 0;
+  int hidden = 0;
+  std::string visible_list;
+  std::string hidden_list;
+  for (int i = 0; i < model_->count(); ++i) {
+    const bool is_visible = IsModelIndexVisible(i);
+    const std::string env =
+        parra::EnvironmentTag::Get(model_->GetWebContentsAt(i));
+    if (is_visible) {
+      ++visible;
+      if (!visible_list.empty())
+        visible_list += ",";
+      visible_list += base::NumberToString(i) + ":" + env;
+    } else {
+      ++hidden;
+      if (!hidden_list.empty())
+        hidden_list += ",";
+      hidden_list += base::NumberToString(i) + ":" + env;
+    }
+  }
+
+  LOG(INFO) << "parra-ui: SNAPSHOT (" << reason << ") active_env='"
+            << mapper.active_environment() << "' model_count="
+            << model_->count() << " visible=" << visible << " hidden=" << hidden
+            << " | visible=" << visible_list << " | hidden=" << hidden_list;
+
+  // Cross-check against what the view layer actually thinks, so a filter that
+  // reports the right answer but is not honoured by the layout cannot pass
+  // silently.
+  int view_visible_tabs = 0;
+  for (int i = 0; i < tabstrip_->GetTabCount(); ++i) {
+    Tab* tab = tabstrip_->tab_at(i);
+    if (tab && tab->GetVisible())
+      ++view_visible_tabs;
+  }
+  LOG(INFO) << "parra-ui: SNAPSHOT (" << reason
+            << ") view_tab_count=" << tabstrip_->GetTabCount()
+            << " view_visible_tabs=" << view_visible_tabs;
+}
+
+void BrowserTabStripController::ApplyEnvironmentFilter() {
+  if (!parra_window_state_)
+    return;
+  if (!tabstrip_)
+    return;
+
+  // Forcing the container through a full re-layout is what makes the filter
+  // take effect: SetTabSlotVisibility() is what calls SetVisible() on each tab,
+  // and it runs from Layout() / CompleteAnimationAndLayout(). Doing it
+  // explicitly here means the strip is correct immediately after a switch
+  // instead of on the next unrelated layout pass.
+  tabstrip_->InvalidateLayout();
+  tabstrip_->DeprecatedLayoutImmediately();
+}bool BrowserTabStripController::IsActiveTab(int model_index) const {
   return GetActiveIndex() == model_index;
 }
 
@@ -646,6 +787,71 @@ void BrowserTabStripController::OnTabStripModelChanged(
   if (selection.selection_changed()) {
     tabstrip_->SetSelection(selection.new_model);
   }
+
+  // Parra: an environment switch activates a tab in the new environment, so this
+  // is the point where the visible set must change too. Selection is the only
+  // model-visible consequence of a switch (the model itself is untouched), which
+  // is why the sync hangs off this event rather than off a tab event.
+  //
+  // ADOPT NATIVE ACTIVATION FIRST, THEN SYNC.
+  //
+  // Chromium can activate a tab without going through the Parra environment
+  // switcher: Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+1..9, a browser command, a bookmark,
+  // session restore, a window move. In every one of those cases the user is now
+  // looking at a page in some environment, and the tab strip must agree with the
+  // content area. Failing to adopt leaves the two permanently disagreeing: content
+  // shows an environment whose tabs the strip has hidden, so the strip shows no
+  // selection at all.
+  //
+  // Adopting is preferred over refusing because the activation has already
+  // happened by the time this observer runs; refusing would mean undoing a user
+  // action. The ordering matters: adopt first, then let the filter repaint for the
+  // newly adopted environment, so there is never an intermediate frame where the
+  // strip filters for the old environment while the content shows the new one.
+  if (parra::IsParraPocEnabled()) {
+    AdoptActiveTabEnvironment();
+  }
+  SyncEnvironmentFilterIfStale();
+}
+
+void BrowserTabStripController::AdoptActiveTabEnvironment() {
+  if (!parra::IsParraPocEnabled() || !model_)
+    return;
+
+  // Re-entrancy guard. Changing the environment below can lead back here through
+  // a re-layout (ShouldTabBeVisible -> IsModelIndexVisible) and, in principle,
+  // through a nested model notification. Without the guard two observers could
+  // ping-pong the environment between two tabs.
+  if (parra_adopting_active_tab_)
+    return;
+
+  const int active_index = model_->active_index();
+  if (active_index == TabStripModel::kNoTab ||
+      !model_->ContainsIndex(active_index)) {
+    return;
+  }
+
+  // Resolve the window's state once; if this window has no Parra state (unit
+  // tests, teardown) there is nothing to adopt into.
+  parra::WindowEnvironmentState* state =
+      parra::WindowEnvironmentState::GetForModel(model_);
+  if (!state)
+    return;
+
+  const std::string& owner =
+      parra::EnvironmentTag::Get(model_->GetWebContentsAt(active_index));
+
+  if (owner == state->active_environment())
+    return;
+
+  base::AutoReset<bool> guard(&parra_adopting_active_tab_, true);
+
+  LOG(INFO) << "parra-ui: native activation moved the active tab to environment '"
+            << owner << "' (was '" << state->active_environment()
+            << "'); adopting it for this window instead of leaving the strip and "
+               "the content area disagreeing";
+
+  state->SetActiveEnvironment(owner);
 }
 
 void BrowserTabStripController::OnTabWillBeAdded() {

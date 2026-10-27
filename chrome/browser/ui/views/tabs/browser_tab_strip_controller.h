@@ -10,6 +10,8 @@
 
 #include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
+#include "chrome/browser/parra/environment_index_mapper.h"
+#include "chrome/browser/parra/window_environment_state.h"
 #include "chrome/browser/ui/immersive/immersive_mode_controller.h"
 #include "chrome/browser/ui/tabs/hover_tab_selector.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -57,6 +59,7 @@ class BrowserTabStripController : public TabStripController,
 
   int GetCount() const override;
   bool IsValidIndex(int model_index) const override;
+  bool IsModelIndexVisible(int model_index) const override;
   bool IsActiveTab(int model_index) const override;
   std::optional<int> GetActiveIndex() const override;
   bool IsTabSelected(int model_index) const override;
@@ -175,6 +178,56 @@ class BrowserTabStripController : public TabStripController,
   raw_ptr<TabStrip> tabstrip_;
 
   raw_ptr<BrowserView> browser_view_;
+
+  // Parra: per-window environment state. OWNED HERE.
+  //
+  // This controller is created once per browser window and destroyed with that
+  // window's tab strip, which is exactly the lifetime the environment state needs:
+  // long enough to outlive any tab-close callback during teardown, and short
+  // enough that nothing survives its window. See window_environment_state.h for
+  // why the object must NOT be self-deleting from BrowserDidClose.
+  std::unique_ptr<parra::WindowEnvironmentState> parra_window_state_;
+
+  // Recomputes tab visibility after the active environment changed and
+  // re-lays out the strip. Kept as one function so the "switch environment"
+  // path cannot forget one of the two steps.
+  void ApplyEnvironmentFilter();
+
+  // If the model's active tab belongs to an environment other than this window's
+  // active environment, adopt that environment for this window.
+  //
+  // This is the single coordination point for every native Chromium path that can
+  // change the active tab without consulting Parra: Ctrl+Tab, Ctrl+Shift+Tab,
+  // Ctrl+1..9, browser commands, bookmarks, session restore. It runs from the model
+  // observer, so it covers all of them at once instead of patching each command.
+  //
+  // Adopting (rather than refusing) is deliberate: by the time the observer runs the
+  // activation has already happened, so refusing would mean undoing a user action.
+  void AdoptActiveTabEnvironment();
+
+  // True while AdoptActiveTabEnvironment() is changing the environment. Prevents
+  // the resulting notifications from re-entering and ping-ponging between tabs.
+  bool parra_adopting_active_tab_ = false;
+
+ public:
+  // Re-applies the environment filter if the active environment changed since
+  // the last time it was applied. Safe to call at any time and cheap when
+  // nothing changed; this is what the environment switcher calls after a switch.
+  void SyncEnvironmentFilterIfStale();
+
+  // Emits a PARRA-UI snapshot of which model indices the filter reports as
+  // visible, plus a cross-check of what the view layer actually shows.
+  //
+  // The cross-check matters: a filter that answers correctly but whose answer is
+  // not honoured by the layout would look perfect in logs that only print the
+  // filter's own opinion.
+  void LogVisibilitySnapshot(const char* reason) const;
+
+ private:
+  // The environment the tab strip was last laid out for. Used to detect that a
+  // switch happened, because an environment switch produces no TabStripModel
+  // event at all.
+  std::string parra_last_applied_environment_ = parra::kDefaultEnvironmentId;
 
   // If non-NULL it means we're showing a menu for the tab.
   std::unique_ptr<TabContextMenuController> context_menu_controller_;

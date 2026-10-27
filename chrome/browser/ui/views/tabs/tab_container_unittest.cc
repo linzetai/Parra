@@ -120,6 +120,10 @@ class FakeTabContainerController final : public TabContainerController {
     return tab_strip_controller_->IsValidIndex(index);
   }
 
+  bool IsModelIndexVisible(int model_index) const override {
+    return tab_strip_controller_->IsModelIndexVisible(model_index);
+  }
+
   std::optional<int> GetActiveIndex() const override {
     return tab_strip_controller_->GetActiveIndex();
   }

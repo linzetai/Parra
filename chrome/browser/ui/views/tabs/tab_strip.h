@@ -233,6 +233,7 @@ class TabStrip : public views::View,
 
   // TabContainerController:
   bool IsValidModelIndex(int index) const override;
+  bool IsModelIndexVisible(int model_index) const override;
   std::optional<int> GetActiveIndex() const override;
   int NumPinnedTabsInModel() const override;
   void OnDropIndexUpdate(std::optional<int> index, bool drop_before) override;

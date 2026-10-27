@@ -43,6 +43,7 @@ class FakeBaseTabStripController : public TabStripController {
   ui::ListSelectionModel GetSelectionModel() const override;
   int GetCount() const override;
   bool IsValidIndex(int index) const override;
+  bool IsModelIndexVisible(int index) const override;
   bool IsActiveTab(int index) const override;
   std::optional<int> GetActiveIndex() const override;
   bool IsTabSelected(int index) const override;

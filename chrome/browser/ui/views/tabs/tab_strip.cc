@@ -1655,6 +1655,13 @@ bool TabStrip::IsValidModelIndex(int index) const {
   return controller_->IsValidIndex(index);
 }
 
+bool TabStrip::IsModelIndexVisible(int model_index) const {
+  // Forwarded to the TabStripController so the environment filter lives in one
+  // place (BrowserTabStripController) instead of being duplicated in the view
+  // layer. TabStrip itself has no opinion about environments.
+  return controller_->IsModelIndexVisible(model_index);
+}
+
 std::optional<int> TabStrip::GetActiveIndex() const {
   return controller_->GetActiveIndex();
 }

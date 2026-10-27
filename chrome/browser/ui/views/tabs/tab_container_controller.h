@@ -30,6 +30,19 @@ class TabContainerController {
   // Returns true if `index` is a valid model index.
   virtual bool IsValidModelIndex(int index) const = 0;
 
+  // Returns true if the tab at `model_index` should take part in the visual
+  // layout and be shown.
+  //
+  // This is the hook the Parra environment filter uses: a tab that belongs to a
+  // non-active environment is still a perfectly normal member of the
+  // TabStripModel, it is merely not on screen. Keeping the decision here (rather
+  // than in TabStrip) means both the layout width calculation and the per-tab
+  // SetVisible() call agree by construction, because they read the same answer.
+  //
+  // Implementations must return true for every index when no filtering is
+  // active, which is the upstream behaviour.
+  virtual bool IsModelIndexVisible(int model_index) const = 0;
+
   // Returns the index of the active tab.
   virtual std::optional<int> GetActiveIndex() const = 0;
 

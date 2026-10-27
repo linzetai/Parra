@@ -119,6 +119,13 @@ bool FakeBaseTabStripController::IsValidIndex(int index) const {
   return index >= 0 && index < num_tabs_;
 }
 
+bool FakeBaseTabStripController::IsModelIndexVisible(int index) const {
+  // The fake has no environments, so every valid tab is visible. Kept as a
+  // delegated call so tests that want to exercise the filter can override
+  // visibility without changing TabContainer.
+  return IsValidIndex(index);
+}
+
 bool FakeBaseTabStripController::IsActiveTab(int index) const {
   if (!IsValidIndex(index)) {
     return false;

@@ -136,6 +136,15 @@ class TabStripLayoutHelper {
   // if `model_index` = N, slots_.size() will be returned.
   int GetFirstSlotIndexForTabModelIndex(int model_index) const;
 
+  // Inverse of GetFirstSlotIndexForTabModelIndex(): the model index of the tab
+  // at `slot_index`, or nullopt when that slot is not an open tab (a group
+  // header, or a tab that is animating closed).
+  //
+  // Needed by the Parra environment filter, which resolves "should this slot be
+  // shown" by asking the controller about a MODEL index, but only has slot
+  // indices while building the layout.
+  std::optional<int> GetTabModelIndexForSlotIndex(int slot_index) const;
+
   // Given a group ID, returns the index of its header's corresponding TabSlot
   // in `slots_`.
   int GetSlotIndexForGroupHeader(tab_groups::TabGroupId group) const;

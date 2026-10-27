@@ -56,6 +56,14 @@ class TabStripController {
   // Returns true if `index` is a valid model index.
   virtual bool IsValidIndex(int index) const = 0;
 
+  // Returns true if the tab at `model_index` should be shown.
+  //
+  // Parra: the environment filter. A tab in a non-active environment keeps
+  // existing in the TabStripModel and keeps running; it is only excluded from
+  // the visible tab strip. Returns true for every index when no environment
+  // filtering is active, which is the upstream behaviour.
+  virtual bool IsModelIndexVisible(int model_index) const = 0;
+
   // Returns true if the tab at `index` is the active tab. The active tab is the
   // one whose content is shown.
   virtual bool IsActiveTab(int index) const = 0;

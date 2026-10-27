@@ -1492,6 +1492,16 @@ bool TabContainer::IsTabVisible(const Tab* tab) const {
   if (!tab) {
     return false;
   }
+
+  // Parra: a tab in another environment is not visible, including a pinned one.
+  // This mirrors ShouldTabBeVisible(), and exists so that the closing-mode width
+  // arithmetic counts the same tabs the user can actually see.
+  const std::optional<int> parra_model_index = GetModelIndexOf(tab);
+  if (parra_model_index.has_value() &&
+      !controller_->IsModelIndexVisible(*parra_model_index)) {
+    return false;
+  }
+
   if (tab->data().pinned) {
     return true;
   }
@@ -1689,6 +1699,20 @@ Tab* TabContainer::FindTabHitByPoint(const gfx::Point& point) {
 }
 
 bool TabContainer::ShouldTabBeVisible(const Tab* tab) const {
+  // Parra: the environment filter decides first, before every other rule.
+  //
+  // It is placed first on purpose. A tab from another environment must not be
+  // visible even while it is being dragged, even if it is pinned, and even if it
+  // happens to be the tab that would otherwise be considered active. Letting any
+  // of the later rules run first would produce a state where a foreign tab is on
+  // screen, which is exactly the leak this whole phase exists to prevent.
+  const std::optional<int> parra_model_index =
+      tab ? GetModelIndexOf(tab) : std::nullopt;
+  if (parra_model_index.has_value() &&
+      !controller_->IsModelIndexVisible(*parra_model_index)) {
+    return false;
+  }
+
   // Detached tabs should always be invisible (as they close).
   if (tab->detached()) {
     return false;

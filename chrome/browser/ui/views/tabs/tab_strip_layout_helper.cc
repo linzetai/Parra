@@ -389,6 +389,30 @@ int TabStripLayoutHelper::GetFirstSlotIndexForTabModelIndex(
   return slots_.size();
 }
 
+std::optional<int> TabStripLayoutHelper::GetTabModelIndexForSlotIndex(
+    int slot_index) const {
+  if (slot_index < 0 || slot_index >= static_cast<int>(slots_.size())) {
+    return std::nullopt;
+  }
+  if (slots_[slot_index].type != TabSlotView::ViewType::kTab ||
+      slots_[slot_index].state.IsClosed()) {
+    return std::nullopt;
+  }
+
+  // Inverse of GetFirstSlotIndexForTabModelIndex(): the model index of a tab
+  // slot is the number of open tabs that precede it.
+  int model_index = 0;
+  for (int i = 0; i < slot_index; ++i) {
+    if (slots_[i].state.IsClosed()) {
+      continue;
+    }
+    if (slots_[i].type == TabSlotView::ViewType::kTab) {
+      ++model_index;
+    }
+  }
+  return model_index;
+}
+
 int TabStripLayoutHelper::GetSlotIndexForGroupHeader(
     tab_groups::TabGroupId group) const {
   const auto it = std::ranges::find_if(slots_, [group](const auto& slot) {
@@ -416,6 +440,23 @@ std::optional<int> TabStripLayoutHelper::GetAdjacentSplitTab(
 }
 
 bool TabStripLayoutHelper::SlotIsCollapsedTab(int i) const {
+  // Parra: the environment filter takes precedence over group collapsing and
+  // focus mode.
+  //
+  // Why it must be here as well as in TabContainer: a collapsed slot is given
+  // tab_overlap width by CalculateTabBounds, and consecutive collapsed slots
+  // therefore advance the cursor by zero. That is what makes the visible tabs
+  // close up with no gaps. If the environment filter only hid the view without
+  // also collapsing the slot, every hidden tab would still reserve a full tab's
+  // width and the strip would show a row of empty space.
+  if (slots_[i].type == TabSlotView::ViewType::kTab) {
+    const std::optional<int> model_index = GetTabModelIndexForSlotIndex(i);
+    if (model_index.has_value() &&
+        !controller_->IsModelIndexVisible(*model_index)) {
+      return true;
+    }
+  }
+
   const std::optional<tab_groups::TabGroupId> focused_group =
       controller_->GetFocusedGroup();
 

@@ -26,6 +26,7 @@
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/parra/parra_storage_partition_util.h"
 #include "chrome/browser/renderer_host/chrome_navigation_ui_data.h"
 #include "chrome/browser/tab_contents/tab_util.h"
 #include "chrome/browser/ui/browser_init_state.h"
@@ -75,6 +76,8 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/site_isolation_policy.h"
+#include "content/public/browser/security_principal.h"
+#include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/buildflags/buildflags.h"
 #include "third_party/blink/public/common/features_generated.h"
@@ -562,6 +565,42 @@ Profile* GetSourceProfile(NavigateParams* params) {
   return params->initiating_profile;
 }
 
+// Parra PoC: resolves the StoragePartitionConfig a new tab should join.
+//
+// The environment is inherited from whichever tab initiated the navigation, so
+// ctrl+click / target=_blank / window.open / "open link in new tab" all stay
+// inside the originating environment. When there is no initiator we fall back
+// to the browser's active tab, which is the documented product behavior ("new
+// tabs belong to the currently active environment").
+//
+// Returns the default config whenever the PoC is off or no environment is
+// active, in which case callers must take the plain upstream path.
+content::StoragePartitionConfig GetInheritedPartitionConfig(
+    const NavigateParams& params) {
+  if (!parra::IsParraPocEnabled())
+    return content::StoragePartitionConfig();
+
+  content::WebContents* source_contents = params.source_contents;
+  if (!source_contents && params.browser) {
+    TabStripModel* tab_strip_model = params.browser->GetTabStripModel();
+    if (tab_strip_model)
+      source_contents = tab_strip_model->GetActiveWebContents();
+  }
+  if (!source_contents)
+    return content::StoragePartitionConfig();
+
+  content::SiteInstance* site_instance = source_contents->GetSiteInstance();
+  if (!site_instance)
+    return content::StoragePartitionConfig();
+
+  const content::StoragePartitionConfig config =
+      site_instance->GetSecurityPrincipal().GetStoragePartitionConfig();
+  if (!parra::IsEnvironmentStoragePartition(config))
+    return content::StoragePartitionConfig();
+
+  return config;
+}
+
 std::unique_ptr<content::WebContents> CreateTargetContents(
     const NavigateParams& params,
     const GURL& url) {
@@ -576,9 +615,11 @@ std::unique_ptr<content::WebContents> CreateTargetContents(
   // will stay in the same BrowsingInstance (creating frame proxies as needed)
   // preserving the requested opener relationship along the way.
   scoped_refptr<content::SiteInstance> initial_site_instance_for_new_contents =
-      params.opener ? params.opener->GetSiteInstance()
-                    : tab_util::GetSiteInstanceForNewTab(
-                          params.browser->GetProfile(), url);
+      params.opener
+          ? params.opener->GetSiteInstance()
+          : tab_util::GetSiteInstanceForNewTab(
+                params.browser->GetProfile(), url,
+                GetInheritedPartitionConfig(params));
 
   WebContents::CreateParams create_params(
       params.browser->GetProfile(), initial_site_instance_for_new_contents);

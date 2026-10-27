@@ -5783,6 +5783,18 @@ FrameTree* WebContentsImpl::CreateNewWindow(
       // as long as they preserve the guest's StoragePartition.
       site_instance =
           SiteInstance::CreateForGuest(GetBrowserContext(), partition_config);
+    } else if (!partition_config.is_default()) {
+      // A noopener window still has to stay in the opener's StoragePartition:
+      // partition membership is a security boundary independent of whether the
+      // windows can script each other. CreateForFixedStoragePartition() starts
+      // a new BrowsingInstance (so no script relationship is created) while
+      // pinning every navigation to `partition_config`.
+      //
+      // Without this, `window.open(url, '_blank', 'noopener')` and
+      // `<a target=_blank rel=noopener>` would silently drop into the default
+      // partition and lose the opener's cookies/storage.
+      site_instance = SiteInstance::CreateForFixedStoragePartition(
+          GetBrowserContext(), params.target_url, partition_config);
     } else {
       site_instance = SiteInstance::Create(GetBrowserContext());
     }

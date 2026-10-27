@@ -49,6 +49,7 @@ source_set("impl") {
     "//chrome/browser/picture_in_picture",
     "//chrome/browser/prefs",
     "//chrome/browser/profiles:profile",
+    "//chrome/browser/parra:parra",
     "//chrome/browser/renderer_host",
     "//chrome/browser/search_engines",
     "//chrome/browser/tab_contents",

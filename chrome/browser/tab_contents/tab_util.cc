@@ -19,8 +19,10 @@ using content::SiteInstance;
 
 namespace tab_util {
 
-scoped_refptr<SiteInstance> GetSiteInstanceForNewTab(Profile* profile,
-                                                     GURL url) {
+scoped_refptr<SiteInstance> GetSiteInstanceForNewTab(
+    Profile* profile,
+    GURL url,
+    const content::StoragePartitionConfig& partition_config) {
   // Rewrite the |url| if necessary, to ensure that the SiteInstance is
   // associated with a |url| that will actually be loaded.  For example,
   // |url| set to chrome://newtab/ might actually result in a navigation to a
@@ -28,16 +30,28 @@ scoped_refptr<SiteInstance> GetSiteInstanceForNewTab(Profile* profile,
   content::BrowserURLHandler::GetInstance()->RewriteURLIfNecessary(&url,
                                                                    profile);
 
+  // Parra PoC: when a non-default partition is requested, pin the SiteInstance
+  // to it. CreateForFixedStoragePartition() also sets
+  // is_fixed_storage_partition=true, so every later navigation in this tab
+  // (including cross-site ones) stays in the same partition.
+  const bool wants_custom_partition = !partition_config.is_default();
+
   // If |url| is a WebUI or extension, we set the SiteInstance up front so that
   // we don't end up with an extra process swap on the first navigation.
   if (ChromeWebUIControllerFactory::GetInstance()->UseWebUIForURL(profile, url))
-    return SiteInstance::CreateForURL(profile, url);
+    return wants_custom_partition
+               ? SiteInstance::CreateForFixedStoragePartition(profile, url,
+                                                             partition_config)
+               : SiteInstance::CreateForURL(profile, url);
 
 #if BUILDFLAG(ENABLE_HOSTED_APPS)
   if (extensions::ExtensionRegistry::Get(profile)
           ->enabled_extensions()
           .GetHostedAppByURL(url))
-    return SiteInstance::CreateForURL(profile, url);
+    return wants_custom_partition
+               ? SiteInstance::CreateForFixedStoragePartition(profile, url,
+                                                             partition_config)
+               : SiteInstance::CreateForURL(profile, url);
 #endif
 
   // We used to share the SiteInstance for same-site links opened in new tabs,
@@ -48,7 +62,17 @@ scoped_refptr<SiteInstance> GetSiteInstanceForNewTab(Profile* profile,
   if (!SiteInstance::ShouldAssignSiteForURL(url))
     return nullptr;
 
-  return SiteInstance::CreateForURL(profile, url);
+  return wants_custom_partition
+             ? SiteInstance::CreateForFixedStoragePartition(profile, url,
+                                                           partition_config)
+             : SiteInstance::CreateForURL(profile, url);
+}
+
+scoped_refptr<SiteInstance> GetSiteInstanceForNewTab(Profile* profile,
+                                                    GURL url) {
+  return GetSiteInstanceForNewTab(
+      profile, std::move(url),
+      content::StoragePartitionConfig::CreateDefault(profile));
 }
 
 }  // namespace tab_util

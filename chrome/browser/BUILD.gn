@@ -1047,6 +1047,7 @@ source_set("core") {
   }
 
   deps = [
+    "//chrome/browser/parra:parra_startup",
     ":active_use_util",
     ":after_startup_task_utils",
     ":bad_message",

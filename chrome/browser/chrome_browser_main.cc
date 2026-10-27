@@ -55,6 +55,9 @@
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/performance_manager/public/chrome_browser_main_extra_parts_performance_manager.h"
 #include "chrome/browser/performance_monitor/chrome_browser_main_extra_parts_performance_monitor.h"
+#include "chrome/browser/parra/parra_lifecycle_poc.h"
+#include "chrome/browser/parra/parra_startup.h"
+#include "chrome/browser/parra/parra_visibility_poc.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.h"
 #include "chrome/browser/profiles/profile.h"
@@ -1264,6 +1267,11 @@ int ChromeBrowserMainParts::ApplyFirstRunPrefs() {
 int ChromeBrowserMainParts::PreCreateThreadsImpl() {
   TRACE_EVENT0("startup", "ChromeBrowserMainParts::PreCreateThreadsImpl");
 
+  // Parra PoC: must run before any StoragePartition/NetworkContext exists,
+  // because ProfileNetworkContextService reads the registry while building
+  // NetworkContextParams. No-op unless --parra-poc-environments was supplied.
+  parra::InitializePocEnvironmentRegistry();
+
   if (startup_data_->chrome_feature_list_creator()->actual_locale().empty()) {
     ShowMissingLocaleMessageBox();
     return CHROME_RESULT_CODE_MISSING_DATA;
@@ -1731,6 +1739,18 @@ void ChromeBrowserMainParts::PostBrowserStart() {
   for (auto& chrome_extra_part : chrome_extra_parts_) {
     chrome_extra_part->PostBrowserStart();
   }
+
+  // Parra PoC: open one tab per configured environment. No-op unless
+  // --parra-poc-environments was supplied, so upstream behavior is unchanged.
+  parra::MaybeOpenPocEnvironmentTabs();
+
+  // Parra Phase 2.0: tab-detach lifecycle experiment. No-op unless
+  // --parra-poc-lifecycle was supplied.
+  parra::ParraLifecyclePoc::RunFromCommandLine();
+
+  // Parra Phase 2.1: environment visibility experiment (plan A'). No-op unless
+  // --parra-poc-visibility was supplied.
+  parra::MaybeRunVisibilityPoc();
 
   browser_process_->browser_policy_connector()->OnBrowserStarted();
 

@@ -1,0 +1,79 @@
+# Copyright 2026 The Parra Authors
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Parra PoC: environment isolation prototype.
+#
+# Everything Parra-specific lives in this directory so that `gclient sync` and
+# upstream rebases do not conflict with it. Injection points into upstream code
+# are intentionally tiny; see docs/parra/04-phase1-poc-report.md for the list.
+
+source_set("parra") {
+  sources = [
+    "environment_registry.cc",
+    "environment_registry.h",
+    "parra_storage_partition_util.cc",
+    "parra_storage_partition_util.h",
+    "parra_switches.cc",
+    "parra_switches.h",
+  ]
+
+  # Deliberately free of //chrome/browser/ui dependencies so that lower layers
+  # (//chrome/browser/net, //chrome/browser/ui/navigator) can depend on it
+  # without creating a GN cycle with //chrome/browser:core.
+  deps = [
+    "//base",
+    "//chrome/browser/profiles:profile",
+    "//content/public/browser",
+    "//crypto",
+  ]
+}
+
+# Phase 2.1: index mapping and visibility switching. Separate from :parra
+# because it needs TabStripModel, which pulls in the UI layer.
+source_set("parra_tabs") {
+  sources = [
+    "environment_index_mapper.cc",
+    "environment_index_mapper.h",
+    "environment_visibility_controller.cc",
+    "environment_visibility_controller.h",
+  ]
+
+  deps = [
+    ":parra",
+    "//base",
+    "//chrome/browser/profiles:profile",
+    "//chrome/browser/ui/tabs:tab_enums",
+    "//chrome/browser/ui/tabs:tab_strip_impl",
+    "//components/tabs:public",
+    "//content/public/browser",
+  ]
+}
+
+# Startup glue: opens one tab per configured environment. Depends on the UI
+# layer, so only //chrome/browser:core may depend on it.
+source_set("parra_startup") {
+  sources = [
+    "parra_lifecycle_poc.cc",
+    "parra_lifecycle_poc.h",
+    "parra_startup.cc",
+    "parra_startup.h",
+    "parra_visibility_poc.cc",
+    "parra_visibility_poc.h",
+  ]
+
+  deps = [
+    ":parra",
+    ":parra_tabs",
+    "//base",
+    "//chrome/browser/profiles:profile",
+    "//chrome/browser/ui/browser_window",
+    "//chrome/browser/ui/navigator:navigator",
+    "//chrome/browser/ui/tabs:tab_enums",
+    "//chrome/browser/ui/tabs:tab_strip_impl",
+    "//components/tabs:public",
+    "//content/public/browser",
+    "//ui/base",
+    "//url",
+  ]
+}

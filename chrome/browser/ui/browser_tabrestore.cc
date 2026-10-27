@@ -12,6 +12,8 @@
 #include "build/build_config.h"
 #include "chrome/browser/apps/app_service/web_contents_app_id_utils.h"
 #include "chrome/browser/glic/glic_tab_restore_helper.h"
+#include "chrome/browser/parra/environment_tag.h"
+#include "chrome/browser/parra/parra_storage_partition_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_restore.h"
 #include "chrome/browser/sessions/session_service_base.h"
@@ -35,6 +37,7 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/restore_type.h"
 #include "content/public/browser/session_storage_namespace_handle.h"
+#include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
 #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
 #include "ui/gfx/geometry/size.h"
@@ -49,6 +52,76 @@ using sessions::SerializedNavigationEntry;
 namespace chrome {
 
 namespace {
+
+// Parra: locate the environment recorded for a restored tab.
+//
+// Session restore writes `parra.environment_id` into SessionTab::extra_data
+// (see ParraVisibility); it therefore arrives here through `extra_data`.
+constexpr char kParraEnvironmentExtraDataKey[] = "parra.environment_id";
+
+std::string_view ParraEnvironmentIdFromExtraData(
+    const std::map<std::string, std::string>& extra_data) {
+  const auto it = extra_data.find(kParraEnvironmentExtraDataKey);
+  if (it == extra_data.end())
+    return std::string_view();
+  return it->second;
+}
+
+// Parra: decide the initial SiteInstance for a restored tab so that the very
+// first navigation after a restart already runs inside the right
+// StoragePartition.
+//
+// This has to happen here, before WebContents::CreateWithSessionStorage(),
+// because a WebContents cannot change partition once it has a committed
+// navigation: pinning later would mean the first request already went out with
+// the default partition's cookies and host mapping, which is precisely the
+// leak we must avoid.
+//
+// Returns false when the recorded environment no longer exists. The caller then
+// refuses to restore the tab instead of quietly loading it in Personal.
+bool ParraCreateParamsForRestoredTab(
+    BrowserWindowInterface* browser,
+    const std::map<std::string, std::string>& extra_data,
+    const std::vector<std::unique_ptr<NavigationEntry>>& entries,
+    WebContents::CreateParams* create_params) {
+  const std::string_view environment_id =
+      ParraEnvironmentIdFromExtraData(extra_data);
+
+  // Fast path: no Parra involvement at all (the common upstream case).
+  if (environment_id.empty() && !parra::IsParraPocEnabled())
+    return true;
+
+  const parra::ResolvedEnvironment resolved = parra::ResolveEnvironmentForRestore(
+      browser->GetProfile(), environment_id);
+
+  switch (resolved.status) {
+    case parra::EnvironmentResolution::kDefaultPartition:
+      // Personal (or a tab that predates Parra): keep upstream behavior.
+      return true;
+
+    case parra::EnvironmentResolution::kDedicatedPartition: {
+      // Restoring into a dedicated partition. Use the tab's own first URL as
+      // the SiteInstance URL so process allocation matches the eventual
+      // navigation, and mark the partition fixed so later cross-site
+      // navigations stay inside it.
+      const GURL& site_url = entries.empty() ? GURL() : entries.front()->GetURL();
+      create_params->site_instance =
+          content::SiteInstance::CreateForFixedStoragePartition(
+              browser->GetProfile(), site_url, resolved.config);
+      LOG(INFO) << "parra-restore: tab bound to environment '"
+                << environment_id << "' partition=" << resolved.config
+                << " site_url=" << site_url.possibly_invalid_spec();
+      return true;
+    }
+
+    case parra::EnvironmentResolution::kUnknownEnvironment:
+      LOG(ERROR) << "parra-restore: environment '" << environment_id
+                 << "' no longer exists; refusing to restore this tab on the "
+                    "default partition";
+      return false;
+  }
+  return true;
+}
 
 std::unique_ptr<WebContents> CreateRestoredTab(
     BrowserWindowInterface* browser,
@@ -70,25 +143,52 @@ std::unique_ptr<WebContents> CreateRestoredTab(
   content::SessionStorageNamespaceHandleMap session_storage_namespace_map =
       content::CreateMapWithDefaultSessionStorageNamespace(
           browser->GetProfile(), session_storage_namespace);
+
+  // Parra: build the navigation entries up front, because the first URL is
+  // needed to create a SiteInstance pinned to the right StoragePartition.
+  std::vector<std::unique_ptr<NavigationEntry>> entries =
+      ContentSerializedNavigationBuilder::ToNavigationEntries(
+          navigations, browser->GetProfile());
+
   WebContents::CreateParams create_params(browser->GetProfile());
   create_params.initially_hidden = initially_hidden;
   create_params.desired_renderer_state =
       WebContents::CreateParams::kNoRendererProcess;
   create_params.last_active_time_ticks = last_active_time_ticks;
   create_params.last_active_time = last_active_time;
+
+  // Parra: must run before CreateWithSessionStorage() so the partition is fixed
+  // before any navigation. Returns false when the recorded environment is gone.
+  if (!ParraCreateParamsForRestoredTab(browser, extra_data, entries,
+                                       &create_params)) {
+    return nullptr;
+  }
+
   std::unique_ptr<WebContents> web_contents =
       WebContents::CreateWithSessionStorage(create_params,
                                             session_storage_namespace_map);
+
+  // Parra: tag the restored tab with its environment so EnvironmentIndexMapper
+  // can place it in the right visible set.
+  //
+  // This must happen here and not later: TabStripModel derives an environment
+  // set from the tag on demand, and a tab that is untagged even briefly would be
+  // counted as Personal. Tagging before the tab is handed to the strip means no
+  // observer can ever see it in the wrong environment.
+  //
+  // Untagged upstream tabs are deliberately left untagged: EnvironmentTag::Get()
+  // reports Personal for them, which is what a stock Chromium tab is.
+  if (!ParraEnvironmentIdFromExtraData(extra_data).empty()) {
+    parra::EnvironmentTag::Set(
+        web_contents.get(),
+        std::string(ParraEnvironmentIdFromExtraData(extra_data)));
+  }
   apps::SetAppIdForWebContents(browser->GetProfile(), web_contents.get(),
                                extension_app_id);
 
   glic::RestoreGlicStateFromExtraData(web_contents.get(), extra_data);
   send_tab_to_self::SendTabToSelfActivationTracker::RestoreFromExtraData(
       web_contents.get(), extra_data);
-
-  std::vector<std::unique_ptr<NavigationEntry>> entries =
-      ContentSerializedNavigationBuilder::ToNavigationEntries(
-          navigations, browser->GetProfile());
 
   blink::UserAgentOverride ua_override;
   ua_override.ua_string_override = user_agent_override.ua_string_override;
@@ -287,6 +387,15 @@ WebContents* AddRestoredTab(
       last_active_time_ticks, last_active_time, session_storage_namespace,
       user_agent_override, extra_data, initially_hidden, from_session_restore);
 
+  // Parra: CreateRestoredTab returns null when the tab's recorded environment no
+  // longer exists. Dropping the tab is the deliberate choice: restoring it on
+  // the default partition would leak Personal's cookies to that URL.
+  if (!web_contents) {
+    LOG(ERROR) << "parra-restore: skipped a session-restore tab whose "
+                  "environment is missing";
+    return nullptr;
+  }
+
   return AddRestoredTabImpl(std::move(web_contents), browser, tab_index, group,
                             select, pin, from_session_restore,
                             is_active_browser);
@@ -305,6 +414,12 @@ WebContents* ReplaceRestoredTab(
       browser, navigations, selected_navigation, extension_app_id,
       base::TimeTicks(), base::Time(), session_storage_namespace,
       user_agent_override, extra_data, false, from_session_restore);
+  // Parra: same reasoning as AddRestoredTab above.
+  if (!web_contents) {
+    LOG(ERROR) << "parra-restore: skipped a replaced tab whose environment is "
+                  "missing";
+    return nullptr;
+  }
   WebContents* raw_web_contents = web_contents.get();
 
   // ReplaceWebContentsAt won't animate in the restoration, so manually do the

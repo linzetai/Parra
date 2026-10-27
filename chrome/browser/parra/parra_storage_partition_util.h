@@ -37,6 +37,38 @@ std::string_view GetEnvironmentIdForStoragePartition(
 bool IsEnvironmentStoragePartition(
     const content::StoragePartitionConfig& config);
 
+// Outcome of resolving an environment id that came from persisted session data.
+//
+// Session restore may encounter an environment id that no longer exists (the
+// environment was deleted, or the manifest was lost). Failing open to the
+// default partition would silently drop isolation and let the restored page
+// send requests with the wrong cookies, so the caller needs to distinguish
+// "this environment is gone" from "this tab belongs to the default
+// environment". Restore must then surface an explicit error state instead of
+// quietly loading the URL in Personal.
+enum class EnvironmentResolution {
+  // Use the default partition. Covers the reserved `personal` environment and
+  // every tab created outside Parra.
+  kDefaultPartition,
+  // Use a dedicated fixed partition; `config` is filled in.
+  kDedicatedPartition,
+  // The id is unknown. Restore must NOT proceed with the saved URL.
+  kUnknownEnvironment,
+};
+
+struct ResolvedEnvironment {
+  EnvironmentResolution status = EnvironmentResolution::kDefaultPartition;
+  content::StoragePartitionConfig config;
+};
+
+// Resolves an environment id read from SessionTab::extra_data.
+//
+// Unlike GetStoragePartitionConfigForEnvironment() this NEVER fails open: an
+// unrecognized id yields kUnknownEnvironment so restore can refuse the load.
+ResolvedEnvironment ResolveEnvironmentForRestore(
+    Profile* profile,
+    std::string_view environment_id);
+
 // Returns the net::HostMappingRules string for the partition identified by
 // `relative_partition_path` (the argument that
 // ContentBrowserClient::ConfigureNetworkContextParams() receives).

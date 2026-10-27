@@ -503,6 +503,7 @@ if (!is_android) {
       "//base",
       "//chrome/browser/apps/app_service",
       "//chrome/browser/glic",
+      "//chrome/browser/parra:parra",
       "//chrome/browser/profiles:profile",
       "//chrome/browser/sessions",
       "//chrome/browser/ui/browser_window",

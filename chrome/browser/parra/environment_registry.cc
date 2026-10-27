@@ -230,18 +230,27 @@ base::FilePath EnvironmentRegistry::GetRelativePartitionPathForConfig(
 
 std::string EnvironmentRegistry::GetHostMappingRulesForPartitionPath(
     const base::FilePath& relative_partition_path) const {
-  if (relative_partition_path.empty())
-    return std::string();
-
+  // The empty path IS the default partition. An environment that maps to the
+  // default partition (the reserved `personal` environment) still needs its
+  // host rules, otherwise its tabs cannot resolve the test hostname at all and
+  // fail with DNS_PROBE_FINISHED_NXDOMAIN while every other environment works.
+  //
+  // This used to return early on an empty path, which silently disabled host
+  // mapping for Personal only -- a bug that looked like a partition mix-up.
   for (const Environment& environment : environments_) {
     // NOTE: deliberately not going through StoragePartitionConfig::Create(),
     // which dereferences a BrowserContext. The relative path is a pure
     // function of (domain, name), so compute it directly.
-    if (GetRelativePartitionPathForConfig(kParraPartitionDomain,
-                                         environment.id) ==
-        relative_partition_path) {
+    const bool uses_default_partition =
+        environment.id == kPersonalEnvironmentId;
+    const bool path_matches =
+        uses_default_partition
+            ? relative_partition_path.empty()
+            : GetRelativePartitionPathForConfig(kParraPartitionDomain,
+                                                environment.id) ==
+                  relative_partition_path;
+    if (path_matches)
       return environment.host_mapping_rules;
-    }
   }
   return std::string();
 }

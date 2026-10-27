@@ -17,6 +17,7 @@
 #include "base/containers/to_vector.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
+#include "base/logging.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -1359,6 +1360,11 @@ void ProfileNetworkContextService::ConfigureNetworkContextParamsInternal(
   if (!parra_host_mapping_rules.empty()) {
     network_context_params->host_mapping_rules = parra_host_mapping_rules;
   }
+  // Diagnostic: record exactly what each partition's NetworkContext received.
+  // Without this, a wrong or missing rule is indistinguishable from a DNS
+  // failure, and a shared rule is indistinguishable from a partition mix-up.
+  LOG(INFO) << "parra-net: partition_path='" << relative_partition_path.value()
+            << "' rules='" << parra_host_mapping_rules << "'";
 
   g_browser_process->system_network_context_manager()
       ->ConfigureDefaultNetworkContextParams(network_context_params);

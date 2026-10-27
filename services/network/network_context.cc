@@ -3270,7 +3270,18 @@ URLRequestContextOwner NetworkContext::MakeURLRequestContext(
             std::move(network_layer));
       }));
 
-  if (command_line->HasSwitch(switches::kHostResolverRules)) {
+  // A NetworkContext-scoped host mapping overrides the global switch. This is
+  // what lets separate StoragePartitions (each owning their own NetworkContext)
+  // resolve the same hostname to different addresses concurrently, without
+  // changing global routing for the whole browser. Remapping happens at
+  // resolution time only: the request URL, HTTP Host/:authority, TLS SNI and
+  // certificate verification all keep using the original hostname.
+  const bool has_scoped_host_mapping_rules =
+      params_->host_mapping_rules.has_value() &&
+      !params_->host_mapping_rules->empty();
+  if (has_scoped_host_mapping_rules) {
+    builder.set_host_mapping_rules(*params_->host_mapping_rules);
+  } else if (command_line->HasSwitch(switches::kHostResolverRules)) {
     builder.set_host_mapping_rules(
         command_line->GetSwitchValueASCII(switches::kHostResolverRules));
   } else if (command_line->HasSwitch(switches::kHostRules)) {

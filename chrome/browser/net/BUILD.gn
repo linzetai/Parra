@@ -172,6 +172,7 @@ source_set("impl") {
   public_deps = [ ":net" ]
 
   deps = [
+    "//chrome/browser/parra:parra",
     ":key_pinning_proto",
     "//base:build_time",
     "//build/config/linux/dbus:buildflags",

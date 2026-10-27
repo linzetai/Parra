@@ -38,6 +38,7 @@
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/domain_reliability/service_factory.h"
+#include "chrome/browser/parra/parra_storage_partition_util.h"
 #include "chrome/browser/net/disk_cache_dir_util.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/profiles/profile.h"
@@ -1348,6 +1349,16 @@ void ProfileNetworkContextService::ConfigureNetworkContextParamsInternal(
     in_memory = true;
   }
   base::FilePath path(GetPartitionPath(relative_partition_path));
+
+  // Parra PoC: give each environment's StoragePartition its own host mapping
+  // rules. The rules are scoped to this NetworkContext, so environments can
+  // resolve the same hostname to different addresses at the same time. This is
+  // a no-op unless --parra-poc-environments was supplied.
+  const std::string parra_host_mapping_rules =
+      parra::GetHostMappingRulesForPartitionPath(relative_partition_path);
+  if (!parra_host_mapping_rules.empty()) {
+    network_context_params->host_mapping_rules = parra_host_mapping_rules;
+  }
 
   g_browser_process->system_network_context_manager()
       ->ConfigureDefaultNetworkContextParams(network_context_params);

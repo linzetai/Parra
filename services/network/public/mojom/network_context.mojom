@@ -421,6 +421,25 @@ struct NetworkContextParams {
   // provided, the disk cache will use it to get an encryptor instance.
   pending_remote<CacheEncryptionProvider>? encryption_provider;
 
+  // Host mapping rules scoped to this NetworkContext, in
+  // net::HostMappingRules syntax ("map host ip[, map host:port ip:port]",
+  // optionally with "exclude host").
+  //
+  // When set and non-empty, these rules take precedence over the global
+  // --host-resolver-rules switch. Remapping happens at DNS resolution time and
+  // only changes the address that the socket connects to: the request URL, the
+  // HTTP Host/:authority header, TLS SNI and certificate verification all keep
+  // using the original hostname. This means mapping to an IP does not weaken
+  // any TLS or same-origin checks.
+  //
+  // Because each StoragePartition owns its own NetworkContext, this field is
+  // the mechanism that lets two StoragePartitions resolve the same hostname to
+  // different addresses at the same time.
+  //
+  // An empty string means "no remapping"; the global switch is then honored as
+  // before. Embedders must not use this to globally override routing.
+  string? host_mapping_rules;
+
   // Enabled protocols. Note that these apply to all fetches, including those
   // used to fetch PAC scripts. Note that currently data URLs are always enabled
   // and file URLs are always disabled.

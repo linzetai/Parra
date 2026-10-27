@@ -12,6 +12,8 @@ source_set("parra") {
   sources = [
     "environment_registry.cc",
     "environment_registry.h",
+    "environment_tag.cc",
+    "environment_tag.h",
     "parra_storage_partition_util.cc",
     "parra_storage_partition_util.h",
     "parra_switches.cc",
@@ -31,22 +33,30 @@ source_set("parra") {
 
 # Phase 2.1: index mapping and visibility switching. Separate from :parra
 # because it needs TabStripModel, which pulls in the UI layer.
+#
+# WindowEnvironmentState lives here rather than in :parra because it is scoped to
+# a BrowserWindowInterface, which is a UI-layer type. Putting it in the low layer
+# would force :parra to depend on the UI layer and create a GN cycle.
 source_set("parra_tabs") {
   sources = [
     "environment_index_mapper.cc",
     "environment_index_mapper.h",
     "environment_visibility_controller.cc",
     "environment_visibility_controller.h",
+    "window_environment_state.cc",
+    "window_environment_state.h",
   ]
 
   deps = [
     ":parra",
     "//base",
     "//chrome/browser/profiles:profile",
+    "//chrome/browser/ui/browser_window",
     "//chrome/browser/ui/tabs:tab_enums",
     "//chrome/browser/ui/tabs:tab_strip_impl",
     "//components/tabs:public",
     "//content/public/browser",
+    "//ui/base/unowned_user_data",
   ]
 }
 

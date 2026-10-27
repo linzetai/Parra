@@ -92,6 +92,16 @@ void MaybeOpenPocEnvironmentTabs() {
     return;
   }
 
+  // Session-restore runs must not create tabs here. The registry has to be
+  // populated (so restored tabs can resolve their environment), but creating
+  // an extra tab per environment on top of the restored ones silently inflates
+  // the tab count and makes isolation measurements meaningless.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kParraPocNoInitialTabs)) {
+    LOG(INFO) << "parra: no-initial-tabs set; registry only, no tabs created";
+    return;
+  }
+
   BrowserWindowInterface* browser =
       GetLastActiveBrowserWindowInterfaceWithAnyProfile();
   if (!browser) {

@@ -55,6 +55,7 @@
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/performance_manager/public/chrome_browser_main_extra_parts_performance_manager.h"
 #include "chrome/browser/performance_monitor/chrome_browser_main_extra_parts_performance_monitor.h"
+#include "chrome/browser/parra/parra_index_mapper_selftest.h"
 #include "chrome/browser/parra/parra_lifecycle_poc.h"
 #include "chrome/browser/parra/parra_startup.h"
 #include "chrome/browser/parra/parra_visibility_poc.h"
@@ -1751,6 +1752,11 @@ void ChromeBrowserMainParts::PostBrowserStart() {
   // Parra Phase 2.1: environment visibility experiment (plan A'). No-op unless
   // --parra-poc-visibility was supplied.
   parra::MaybeRunVisibilityPoc();
+
+  // Parra Phase 2.2A: model-layer validation of EnvironmentIndexMapper. No-op
+  // unless --parra-poc-selftest was supplied. Scheduled rather than run inline
+  // so it observes a fully populated strip.
+  parra::MaybeRunIndexMapperSelfTest();
 
   browser_process_->browser_policy_connector()->OnBrowserStarted();
 

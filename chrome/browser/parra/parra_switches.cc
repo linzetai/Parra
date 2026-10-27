@@ -13,5 +13,7 @@ const char kParraPocLifecycle[] = "parra-poc-lifecycle";
 const char kParraPocLifecycleCycles[] = "parra-poc-lifecycle-cycles";
 const char kParraPocVisibility[] = "parra-poc-visibility";
 const char kParraPocVisibilityCycles[] = "parra-poc-visibility-cycles";
+const char kParraPocNoInitialTabs[] = "parra-poc-no-initial-tabs";
+const char kParraPocSelfTest[] = "parra-poc-selftest";
 
 }  // namespace parra::switches

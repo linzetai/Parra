@@ -17,6 +17,22 @@ class TabStripModel;
 
 namespace parra {
 
+// Observer for "the active environment changed".
+//
+// The tab strip view implements this so it can drop its cached layout and
+// re-apply the filter. Kept as an explicit callback rather than making the tab
+// strip observe the TabStripModel, because an environment switch does not change
+// the model at all -- there is no model event to observe.
+class EnvironmentFilterObserver {
+ public:
+  virtual ~EnvironmentFilterObserver() = default;
+
+  // Called after the active environment has changed and after the new
+  // environment's tab has been activated. Implementations must only re-apply
+  // visibility; they must not change the active tab.
+  virtual void OnActiveEnvironmentChanged() = 0;
+};
+
 // Applies environment visibility to a tab strip without ever removing a tab
 // from the TabStripModel.
 //
@@ -71,11 +87,30 @@ class EnvironmentVisibilityController {
   // Counts switches, so tests can assert the operation actually ran.
   int switch_count() const { return switch_count_; }
 
+  // Registers an observer notified whenever the active environment changes.
+  // Only one observer is supported: there is exactly one tab strip per window,
+  // and the PoC has one window.
+  void set_environment_filter_observer(EnvironmentFilterObserver* observer) {
+    filter_observer_ = observer;
+  }
+
+  // Verifies the two invariants the design depends on:
+  //   1. active tab's environment == active environment
+  //   2. the active tab is visible in that environment
+  // Logs an ERROR when violated. Never mutates state: a violated invariant is a
+  // bug to be reported, not something to paper over by moving the selection.
+  void VerifyInvariants(const char* when) const;
+
  private:
   void LogSnapshot(const char* reason) const;
 
+  // Tells the tab strip to re-apply the environment filter.
+  void NotifyEnvironmentChanged();
+
   raw_ptr<TabStripModel> model_;
   EnvironmentIndexMapper mapper_;
+
+  raw_ptr<EnvironmentFilterObserver> filter_observer_ = nullptr;
 
   int switch_count_ = 0;
 };

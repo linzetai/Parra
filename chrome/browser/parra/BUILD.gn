@@ -64,6 +64,8 @@ source_set("parra_tabs") {
 # layer, so only //chrome/browser:core may depend on it.
 source_set("parra_startup") {
   sources = [
+    "parra_index_mapper_selftest.cc",
+    "parra_index_mapper_selftest.h",
     "parra_lifecycle_poc.cc",
     "parra_lifecycle_poc.h",
     "parra_startup.cc",

@@ -57,7 +57,7 @@ bool EnvironmentVisibilityController::SwitchTo(
   // hosted by ContentsWebView, which is the single supported path by which a
   // tab becomes visible or hidden. Pages in other environments stay alive as
   // background tabs -- exactly the same state as a normal unfocused tab.
-  const std::optional<int> target = mapper_.RestoreIndexFor(environment_id);
+  const std::optional<int> target = mapper_.GetActiveGlobalIndexFor(environment_id);
   if (!target.has_value()) {
     // GetVisibleCount() > 0 guarantees this cannot happen; treat as a bug
     // rather than silently leaving the strip in a half-switched state.
@@ -76,15 +76,83 @@ bool EnvironmentVisibilityController::SwitchTo(
 
   model_->ActivateTabAt(*target);
 
+  // Step 4: the tab strip must now show the new environment's tabs and hide the
+  // previous one's. The UI reads the active environment from the mapper on
+  // demand, so all that is required here is to make it re-lay out; see
+  // EnvironmentFilterObserver::OnActiveEnvironmentChanged().
+  NotifyEnvironmentChanged();
+
   LogSnapshot("after-switch");
+  VerifyInvariants("after-switch");
   return true;
+}
+
+void EnvironmentVisibilityController::VerifyInvariants(const char* when) const {
+  // The invariant that the whole design rests on:
+  //   the active tab's environment == the active environment.
+  //
+  // It is checked rather than assumed because two independent things can break
+  // it: a native activation path that does not go through SwitchTo(), and the
+  // environment being changed without re-activating a tab in it. Either case
+  // would leave the content area showing one environment while the tab strip
+  // shows another -- the single worst failure mode of this architecture, and one
+  // that is invisible without an explicit check.
+  const int active_index = model_->active_index();
+  if (active_index == TabStripModel::kNoTab) {
+    LOG(WARNING) << "parra-vis: invariant check (" << when
+                 << ") skipped: no active tab";
+    return;
+  }
+
+  const std::optional<std::string> active_env =
+      mapper_.EnvironmentOfGlobalIndex(active_index);
+  if (!active_env.has_value()) {
+    LOG(ERROR) << "parra-vis: INVARIANT VIOLATED (" << when
+               << "): active tab at g" << active_index
+               << " has no readable environment";
+    return;
+  }
+
+  if (*active_env != mapper_.active_environment()) {
+    LOG(ERROR) << "parra-vis: INVARIANT VIOLATED (" << when
+               << "): active tab g" << active_index << " belongs to '"
+               << *active_env << "' but active environment is '"
+               << mapper_.active_environment()
+               << "'. The tab strip and the content area disagree.";
+    return;
+  }
+
+  // Second invariant: the active tab must be visible in its own environment.
+  if (!mapper_.IsTabVisible(mapper_.active_environment(), active_index)) {
+    LOG(ERROR) << "parra-vis: INVARIANT VIOLATED (" << when
+               << "): active tab g" << active_index
+               << " is not visible in its own environment '"
+               << mapper_.active_environment() << "'";
+    return;
+  }
+
+  LOG(INFO) << "parra-vis: invariant OK (" << when << ") active tab g"
+            << active_index << " env='" << *active_env << "'";
+}
+
+void EnvironmentVisibilityController::NotifyEnvironmentChanged() {
+  if (!filter_observer_)
+    return;
+  filter_observer_->OnActiveEnvironmentChanged();
 }
 
 void EnvironmentVisibilityController::RememberCurrentTab() {
   const int active = model_->active_index();
   if (active == TabStripModel::kNoTab)
     return;
-  mapper_.RememberActiveTab(mapper_.active_environment(), active);
+
+  // Remember under the tab's own environment rather than assuming the tab is in
+  // the active environment. Activating a tab through the tab strip (a click, a
+  // session restore, a window move) changes selection without going through
+  // SwitchTo(), so the two can legitimately disagree for a moment. Recording the
+  // tab under its real owner keeps each environment's memory correct, and the
+  // mapper logs the disagreement so Phase 2.2B can wire the missing sync.
+  mapper_.RememberCurrentActiveTab();
 }
 
 void EnvironmentVisibilityController::LogSnapshot(const char* reason) const {
@@ -96,7 +164,7 @@ void EnvironmentVisibilityController::LogSnapshot(const char* reason) const {
   // Report every tab's environment so a mismatch is visible in the log instead
   // of silently filtered out.
   for (int i = 0; i < model_->count(); ++i) {
-    const std::optional<std::string> env = mapper_.EnvironmentOfModelIndex(i);
+    const std::optional<std::string> env = mapper_.EnvironmentOfGlobalIndex(i);
     content::WebContents* contents = model_->GetWebContentsAt(i);
     LOG(INFO) << "parra-vis:   index=" << i
               << " env=" << (env ? *env : "<none>")

@@ -5,6 +5,7 @@
 #include "chrome/browser/parra/parra_visibility_poc.h"
 
 #include <memory>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -28,6 +29,8 @@
 #include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/security_principal.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/page_transition_types.h"
@@ -39,6 +42,40 @@ namespace {
 
 // Key used in SessionTab::extra_data to record the owning environment.
 constexpr char kEnvironmentExtraDataKey[] = "parra.environment_id";
+
+// Authoritative probe of the StoragePartition a live WebContents is actually
+// using.
+//
+// Why this exists: "which environment do we think this tab belongs to" (our own
+// user data) and "which partition does Chromium actually route its storage and
+// network through" are two different facts, and they can disagree. Diagnostics
+// that only look at our own bookkeeping cannot detect that disagreement, and
+// diagnostics that only count partition directories on disk can be fooled by
+// stale directories. The only trustworthy source is the SiteInstance's
+// SecurityPrincipal.
+//
+// The partition is a property of the committed document, so this returns an
+// empty string before the first commit.
+std::string ActualPartitionConfigOf(content::WebContents* contents) {
+  if (!contents)
+    return "<null-contents>";
+
+  content::RenderFrameHost* main_frame = contents->GetPrimaryMainFrame();
+  if (!main_frame)
+    return "<no-main-frame>";
+
+  scoped_refptr<content::SiteInstance> site_instance =
+      main_frame->GetSiteInstance();
+  if (!site_instance)
+    return "<no-site-instance>";
+
+  const content::StoragePartitionConfig& config =
+      site_instance->GetSecurityPrincipal().GetStoragePartitionConfig();
+  // StoragePartitionConfig only supports stream output, not ToString().
+  std::ostringstream out;
+  out << config;
+  return out.str();
+}
 
 // The fixed environment layout used by this PoC. Deliberately hardcoded: the
 // point is to prove the visibility mechanism, not to build configuration.
@@ -143,6 +180,14 @@ void VisibilityPocRunner::CreateEnvironmentTabs(BrowserWindowInterface* browser,
                                                 TabStripModel* model,
                                                 const EnvironmentSpec& spec,
                                                 int tab_count) {
+  // Logged on every call: the tab count going in is what explains where the first
+  // inserted index comes from. When a launch method mangles the command line (for
+  // example Start-Process dropping the quotes around --parra-poc-host-rules), the
+  // symptom is a strip that already had tabs before the PoC ran, and without this
+  // line that shows up much later as "personal has 7 tabs".
+  LOG(INFO) << "parra-vis: CreateEnvironmentTabs env='" << spec.id
+            << "' count_before=" << model->count() << " to_create=" << tab_count;
+
   const content::StoragePartitionConfig config =
       GetStoragePartitionConfigForEnvironment(profile, spec.id);
 
@@ -205,14 +250,35 @@ void VisibilityPocRunner::Run() {
   // Browser is still initialising trips `!IsDeleteScheduled()` in
   // Browser::OnTabInsertedAt. Instead the placeholder is adopted as the first
   // Personal tab, which also keeps the strip non-empty at all times.
+  //
+  // Adopting alone is not enough: the placeholder sits on chrome://newtab/ and
+  // has never visited the test origin, so it would silently shrink the sample
+  // to 8 usable tabs and make isolation look wrong. Navigate it explicitly.
   content::WebContents* placeholder =
       model->count() == 1 ? model->GetWebContentsAt(0) : nullptr;
+
+  // Logged unconditionally: `count` here is the state the whole 3x3 layout is
+  // built on top of. A count other than 1 means the strip already had tabs before
+  // the PoC ran, which is a launch-method problem rather than a Parra bug, and is
+  // worth distinguishing from one in the log.
+  LOG(INFO) << "parra-vis: placeholder check model_count=" << model->count()
+            << " placeholder=" << (placeholder ? "yes" : "no");
+
   if (placeholder) {
     EnvironmentIndexMapper::SetEnvironmentForContents(
         placeholder, kEnvironments[0].id);
+
+    const GURL placeholder_url(kEnvironments[0].url);
+    if (placeholder_url.is_valid()) {
+      content::NavigationController::LoadURLParams load_params(placeholder_url);
+      load_params.transition_type = ui::PAGE_TRANSITION_TYPED;
+      placeholder->GetController().LoadURLWithParams(load_params);
+    }
+
     LOG(INFO) << "parra-vis: adopted startup placeholder as first '"
               << kEnvironments[0].id << "' tab token="
-              << placeholder->GetUniqueToken().ToString();
+              << placeholder->GetUniqueToken().ToString()
+              << " navigated_to=" << kEnvironments[0].url;
   }
 
   for (const EnvironmentSpec& spec : kEnvironments) {
@@ -227,6 +293,27 @@ void VisibilityPocRunner::Run() {
 
   LOG(INFO) << "parra-vis: total tabs in strip=" << model->count()
             << " (all three environments live in ONE TabStripModel)";
+
+  // Emit the authoritative tab identity table.
+  //
+  // Each line answers three questions that must not be conflated:
+  //   env=      which logical environment we recorded for this tab
+  //   actual=   which StoragePartition Chromium is really using
+  //   token=    stable WebContents identity, so CDP targets can be matched
+  //
+  // Emitted after the first load has had a chance to commit, because the
+  // partition is only observable once a document exists.
+  for (int i = 0; i < model->count(); ++i) {
+    content::WebContents* contents = model->GetWebContentsAt(i);
+    LOG(INFO) << "parra-id: index=" << i
+              << " env=" << EnvironmentIndexMapper::GetEnvironmentForContents(contents)
+              << " actual=" << ActualPartitionConfigOf(contents)
+              << " token="
+              << (contents ? contents->GetUniqueToken().ToString() : "<null>")
+              << " url="
+              << (contents ? contents->GetLastCommittedURL().possibly_invalid_spec()
+                           : std::string());
+  }
 
   controller_ = std::make_unique<EnvironmentVisibilityController>(model);
   // Personal is the initial environment; activate its first tab explicitly so
@@ -286,6 +373,25 @@ void VisibilityPocRunner::OnTick() {
   if (remaining_switches_ <= 0) {
     LOG(INFO) << "parra-vis: cycles complete, total switches="
               << controller_->switch_count();
+
+    // Final authoritative identity dump. By now every tab has committed at
+    // least one document, so `actual=` is populated for all of them. This is
+    // the table the verification scripts reason about.
+    TabStripModel* model = browser->GetTabStripModel();
+    for (int i = 0; model && i < model->count(); ++i) {
+      content::WebContents* contents = model->GetWebContentsAt(i);
+      LOG(INFO) << "parra-final: index=" << i
+                << " env="
+                << EnvironmentIndexMapper::GetEnvironmentForContents(contents)
+                << " actual=" << ActualPartitionConfigOf(contents)
+                << " token="
+                << (contents ? contents->GetUniqueToken().ToString() : "<null>")
+                << " url="
+                << (contents
+                        ? contents->GetLastCommittedURL().possibly_invalid_spec()
+                        : std::string());
+    }
+
     if (timer_)
       timer_->Stop();
     return;

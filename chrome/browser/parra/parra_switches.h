@@ -67,6 +67,22 @@ extern const char kParraPocVisibility[];
 // visits every environment once. 0 disables cycling.
 extern const char kParraPocVisibilityCycles[];
 
+// Populate the environment registry but do NOT create any startup tabs.
+//
+// Required for session-restore runs: the registry must exist so restored tabs
+// can resolve their environment, but creating one tab per environment on top of
+// the restored ones would inflate the tab count.
+extern const char kParraPocNoInitialTabs[];
+
+// Phase 2.2A model-layer self-test: runs T1..T11 of the index-mapper design
+// against the live tab strip and logs PARRA-SELFTEST lines. Verification only.
+//
+//   --parra-poc-selftest
+//
+// Mutates the tab strip (inserts, moves and closes scratch tabs), so it must not
+// be combined with a session-restore run that is being measured.
+extern const char kParraPocSelfTest[];
+
 }  // namespace parra::switches
 
 #endif  // CHROME_BROWSER_PARRA_PARA_SWITCHES_H_

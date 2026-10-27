@@ -498,6 +498,26 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
           tab.pinned, base::TimeTicks(), base::Time(), nullptr,
           tab.user_agent_override, tab.extra_data,
           true /* from_session_restore */, std::nullopt);
+
+      // Parra: AddRestoredTab() returns null when the tab's recorded environment
+      // no longer exists; restoring it on the default partition would leak
+      // Personal's cookies to that URL, so it is dropped deliberately.
+      //
+      // The null check is essential. Upstream never returns null here, so the
+      // very next line dereferences `web_contents` unguarded -- without this
+      // guard, one unrestorable tab crashes the whole browser during startup
+      // instead of skipping that single tab.
+      //
+      // Skipping continues the loop rather than aborting, so the OTHER
+      // environments' tabs still get restored. Aborting the entire restore
+      // because one environment is gone would be a much worse outcome than
+      // dropping the tabs that cannot be placed safely.
+      if (!web_contents) {
+        LOG(ERROR) << "parra-restore: skipping a foreign tab; its environment is "
+                      "missing.";
+        return nullptr;
+      }
+
       // Start loading the tab immediately.
       web_contents->GetController().LoadIfNecessary();
     }
@@ -1196,7 +1216,20 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
         last_active_time_ticks, last_active_time,
         session_storage_namespace.get(), tab.user_agent_override,
         tab.extra_data, true /* from_session_restore */, is_active_browser);
-    DCHECK(web_contents);
+
+    // Parra: AddRestoredTab() returns null when the tab's environment no longer
+    // exists (see browser_tabrestore.cc). Upstream assumes it can never be null
+    // here, and only a DCHECK guards it -- which is a no-op in release builds, so
+    // the very next line would dereference null and crash startup.
+    //
+    // Returning here skips only THIS tab; the caller loops over the rest of the
+    // window's tabs, so every other environment still gets restored. One deleted
+    // environment must not cost the user the rest of their session.
+    if (!web_contents) {
+      LOG(ERROR) << "parra-restore: skipping a tab whose environment is missing; "
+                    "the remaining tabs continue to restore.";
+      return;
+    }
 
     RestoredTab restored_tab(web_contents, is_selected_tab,
                              tab.extension_app_id.empty(), tab.pinned,

@@ -42,6 +42,7 @@
 #include "chrome/browser/glic/public/service/glic_instance_coordinator.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
+#include "chrome/browser/parra/environment_tab_operations.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_window.h"
@@ -809,6 +810,22 @@ void BrowserCommandController::HandleCommandWithDisposition(
               TabStripUserGestureDetails::GestureType::kKeyboard, time_stamp));
       break;
     case IDC_CYCLE_TO_NEXT_TAB:
+      // Parra: Ctrl+Tab is IDC_CYCLE_TO_NEXT_TAB, not IDC_SELECT_NEXT_TAB, so it
+      // has to be intercepted HERE rather than in SelectNextTab().
+      //
+      // Both native branches below are wrong for an environment-filtered strip:
+      // the MRU branch (CycleToMruTab) walks a global most-recently-used list that
+      // spans every environment AND every window, and the fallback branch calls
+      // SelectNextTab() on the model, which cycles global indices. Either one
+      // would move the user into a tab whose environment is hidden from the
+      // strip.
+      if (parra::EnvironmentTabOperations::SelectRelativeTab(
+              browser_, /*next=*/true,
+              TabStripUserGestureDetails(
+                  TabStripUserGestureDetails::GestureType::kKeyboard,
+                  time_stamp))) {
+        break;
+      }
       if (IsCtrlTabMruEnabled(browser_)) {
         base::RecordAction(base::UserMetricsAction("Accel_CycleToNextTab"));
         CycleToMruTab(browser_,
@@ -824,6 +841,14 @@ void BrowserCommandController::HandleCommandWithDisposition(
       }
       break;
     case IDC_CYCLE_TO_PREV_TAB:
+      // Parra: same reasoning as IDC_CYCLE_TO_NEXT_TAB above.
+      if (parra::EnvironmentTabOperations::SelectRelativeTab(
+              browser_, /*next=*/false,
+              TabStripUserGestureDetails(
+                  TabStripUserGestureDetails::GestureType::kKeyboard,
+                  time_stamp))) {
+        break;
+      }
       if (IsCtrlTabMruEnabled(browser_)) {
         base::RecordAction(base::UserMetricsAction("Accel_CycleToPrevTab"));
         CycleToMruTab(browser_,

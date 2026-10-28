@@ -44,6 +44,9 @@
 #include "chrome/browser/feedback/show_feedback_page.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/media/router/media_router_feature.h"
+#include "chrome/browser/parra/environment_tab_operations.h"
+#include "chrome/browser/parra/environment_tab_router.h"
+#include "chrome/browser/parra/parra_storage_partition_util.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/reading_list/reading_list_model_factory.h"
@@ -393,6 +396,13 @@ content::WebContents* DuplicateTabAt(BrowserWindowInterface* browser,
   CHECK(contents);
   std::unique_ptr<content::WebContents> contents_dupe = contents->Clone();
   content::WebContents* raw_contents_dupe = contents_dupe.get();
+
+  // Parra: WebContents::Clone() reuses the source's SiteInstance, so the copy is
+  // already in the right StoragePartition -- but UserData is not copied, so the
+  // environment tag has to be carried over explicitly. Without this the duplicate
+  // would sit in the source's partition while reading as Personal, which is the
+  // one state that must never exist (the tag and the partition would disagree).
+  parra::EnvironmentTabRouter::CopyEnvironmentFrom(contents, raw_contents_dupe);
 
   bool pinned = false;
   if (WindowFeatureController::From(browser)->CanSupportWindowFeature(
@@ -1417,16 +1427,32 @@ content::WebContents& NewTab(BrowserWindowInterface* browser,
 
   if (WindowFeatureController::From(browser)->SupportsWindowFeature(
           WindowFeatureController::WindowFeature::kFeatureTabStrip)) {
+    // Parra: this is the shared entry point for Ctrl+T (IDC_NEW_TAB) and the tab
+    // strip's `+` button (BrowserTabStripController::CreateNewTab both land here),
+    // so one decision covers both surfaces.
+    //
+    // Normally empty: the new tab inherits from the active tab, which is the
+    // documented product rule. It is only non-empty when the window's current
+    // environment has no tabs left, because then the active tab belongs to a
+    // DIFFERENT environment and inheriting from it would create the tab in the
+    // wrong one -- a silent isolation break the user could not see.
+    const std::string parra_environment_id =
+        parra::EnvironmentTabOperations::EnvironmentForUserInitiatedNewTab(
+            browser);
+
     return *AddAndReturnTabAt(browser, GURL(), -1, /*foreground=*/true,
-                              std::nullopt, /*pinned=*/false, window_action);
+                              std::nullopt, /*pinned=*/false, window_action,
+                              parra_environment_id);
   }
 
   ScopedTabbedBrowserDisplayer displayer(browser->GetProfile());
   BrowserWindowInterface* displayer_browser =
       displayer.browser_window_interface();
-  auto* contents = AddAndReturnTabAt(displayer_browser, GURL(), -1,
-                                     /*foreground=*/true, std::nullopt,
-                                     /*pinned=*/false, window_action);
+  auto* contents = AddAndReturnTabAt(
+      displayer_browser, GURL(), -1, /*foreground=*/true, std::nullopt,
+      /*pinned=*/false, window_action,
+      parra::EnvironmentTabOperations::EnvironmentForUserInitiatedNewTab(
+          displayer_browser));
   displayer_browser->GetWindow()->Show();
   // The call to AddBlankTabAt above did not set the focus to the tab as its
   // window was not active, so we have to do it explicitly.
@@ -1486,6 +1512,21 @@ void CloseTab(BrowserWindowInterface* browser) {
   if (!active_tab) {
     return;
   }
+
+  // Parra: make sure the close can only reach tabs of the current environment.
+  //
+  // The strip's multi-selection is a model-level concept, so Ctrl+W would
+  // otherwise close every selected tab including ones hidden in other
+  // environments -- destroying live pages the user cannot even see.
+  //
+  // The scope guard captures the current environment now and restores it after
+  // whatever native path below runs (split-tab close, contextual-tasks panel,
+  // pinned-tab toast, plain close). Every one of those paths can leave the
+  // selection on a tab of another environment, and a guard cannot forget one
+  // whereas four hand-written calls can.
+  parra::EnvironmentTabOperations::PrepareCloseActiveTab(browser);
+  parra::EnvironmentTabOperations::ScopedCloseEnvironmentRestorer
+      parra_close_restorer(browser);
 
   // If the selection model consists of only the indices of a single split tab,
   // decide if just the active tab in the split is closed instead of all tabs in
@@ -1575,12 +1616,24 @@ bool CanResetZoom(content::WebContents* contents) {
 void SelectNextTab(BrowserWindowInterface* browser,
                    TabStripUserGestureDetails gesture_detail) {
   base::RecordAction(UserMetricsAction("SelectNextTab"));
+  // Parra: cycle inside the current environment. Returning true means the
+  // environment was handled here and the native cross-environment cycle must not
+  // also run.
+  if (parra::EnvironmentTabOperations::SelectRelativeTab(browser, /*next=*/true,
+                                                         gesture_detail)) {
+    return;
+  }
   browser->GetTabStripModel()->SelectNextTab(gesture_detail);
 }
 
 void SelectPreviousTab(BrowserWindowInterface* browser,
                        TabStripUserGestureDetails gesture_detail) {
   base::RecordAction(UserMetricsAction("SelectPrevTab"));
+  // Parra: reverse cycle inside the current environment.
+  if (parra::EnvironmentTabOperations::SelectRelativeTab(browser, /*next=*/false,
+                                                         gesture_detail)) {
+    return;
+  }
   browser->GetTabStripModel()->SelectPreviousTab(gesture_detail);
 }
 
@@ -1615,6 +1668,18 @@ void MoveTabPrevious(BrowserWindowInterface* browser) {
 void SelectNumberedTab(BrowserWindowInterface* browser,
                        int index,
                        TabStripUserGestureDetails gesture_detail) {
+  // Parra: Ctrl+1..8 addresses the Nth tab of the CURRENT environment, counted
+  // in the order the user sees them. The upstream loop below walks the whole
+  // model, so it would interpret the number as a global index and activate a tab
+  // belonging to whatever environment happens to sit at that position.
+  //
+  // Returning true means the environment was handled here -- including the case
+  // where it has fewer tabs than the key implies, which is a no-op upstream too.
+  if (parra::EnvironmentTabOperations::SelectTabAtVisibleIndex(
+          browser, index, gesture_detail)) {
+    return;
+  }
+
   TabStripModel* model = browser->GetTabStripModel();
   std::optional<tab_groups::TabGroupId> focused_group =
       model->GetFocusedGroup();
@@ -1635,6 +1700,12 @@ void SelectNumberedTab(BrowserWindowInterface* browser,
 
 void SelectLastTab(BrowserWindowInterface* browser,
                    TabStripUserGestureDetails gesture_detail) {
+  // Parra: Ctrl+9 is "the last tab of the current environment", mirroring how
+  // Ctrl+9 upstream means "the last tab" rather than "the ninth tab".
+  if (parra::EnvironmentTabOperations::SelectLastTab(browser, gesture_detail)) {
+    return;
+  }
+
   TabStripModel* model = browser->GetTabStripModel();
   std::optional<tab_groups::TabGroupId> focused_group =
       model->GetFocusedGroup();
@@ -1870,14 +1941,34 @@ void CreateNewTabGroup(BrowserWindowInterface* browser) {
 }
 
 void CloseTabGroup(BrowserWindowInterface* browser) {
-  const int index = browser->GetTabStripModel()->active_index();
+  TabStripModel* model = browser->GetTabStripModel();
+  const int index = model->active_index();
   std::optional<tab_groups::TabGroupId> group_id =
-      browser->GetTabStripModel()->GetTabGroupForTab(index);
+      model->GetTabGroupForTab(index);
   if (!group_id) {
     return;
   }
 
-  browser->GetTabStripModel()->CloseAllTabsInGroup(group_id.value());
+  // Parra: a tab group may hold tabs of several environments, and the native
+  // CloseAllTabsInGroup() destroys ALL members. With a filtered strip that would
+  // silently kill another environment's live pages. CloseGroupInActiveEnvironment()
+  // detaches the foreign members first and then uses the native close unchanged.
+  //
+  // A false return means the group could not be closed safely; in that case nothing
+  // is closed, which is the only outcome that cannot lose a hidden environment's
+  // page.
+  if (parra::EnvironmentTabOperations::CloseGroupInActiveEnvironment(
+          model, group_id.value())) {
+    return;
+  }
+
+  if (parra::IsParraPocEnabled()) {
+    LOG(ERROR) << "parra: NOT closing tab group: the operation could not be "
+                  "restricted to one environment";
+    return;
+  }
+
+  model->CloseAllTabsInGroup(group_id.value());
 }
 
 void FocusNextTabGroup(BrowserWindowInterface* browser) {

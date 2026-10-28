@@ -17,6 +17,7 @@
 #include "base/metrics/user_metrics.h"
 #include "build/build_config.h"
 #include "chrome/browser/favicon/favicon_utils.h"
+#include "chrome/browser/parra/environment_tab_operations.h"
 #include "chrome/browser/parra/parra_storage_partition_util.h"
 #include "chrome/browser/resource_coordinator/tab_lifecycle_unit_external.h"
 #include "chrome/browser/resource_coordinator/tab_lifecycle_unit_source.h"
@@ -207,6 +208,15 @@ void BrowserTabStripController::InitFromModel(TabStrip* tabstrip) {
   // layout already filters, instead of briefly showing every environment's tabs.
   parra_last_applied_environment_ =
       parra::EnvironmentIndexMapper(model_).active_environment();
+
+  // Parra: install the "one environment per tab group" policy. Done here because
+  // this method runs exactly once per window, next to where the window's
+  // environment state is created. The tabs layer cannot hold this policy itself
+  // (it would need to depend on //chrome/browser/parra, a GN cycle), so it is
+  // injected from this side.
+  parra::EnvironmentTabOperations::InstallGroupMembershipPolicy(model_);
+  parra::EnvironmentTabOperations::InstallCloseCommandPolicy(model_);
+
   LogVisibilitySnapshot("init-from-model");
 
   if (GlassFrameService* service = GlassFrameService::GetInstance()) {
@@ -846,9 +856,35 @@ void BrowserTabStripController::AdoptActiveTabEnvironment() {
 
   base::AutoReset<bool> guard(&parra_adopting_active_tab_, true);
 
+  // Distinguish the two reasons the active tab can end up in another
+  // environment, because they have different consequences:
+  //
+  //  a) the user closed the last tab of the current environment. Chromium MUST
+  //     keep some tab active (BrowserView::OnActiveTabChanged CHECKs for a
+  //     non-null new_contents), so "this environment is now empty" cannot
+  //     literally mean "show nothing". The window therefore follows the tab
+  //     Chromium had to activate, and the environment it follows to is a real,
+  //     consistent environment -- not a foreign page smuggled into the old one.
+  //     Note the model is still non-empty, so Browser::TabStripEmpty() does not
+  //     fire and the window stays open.
+  //
+  //  b) something else activated a foreign tab (a native command, a bookmark,
+  //     session restore). Same conclusion: adopt, so the strip and the content
+  //     area can never disagree.
+  //
+  // Either way the old environment is remembered, and Ctrl+T while it is
+  // re-selected puts its new tab back there (see
+  // EnvironmentTabOperations::EnvironmentForUserInitiatedNewTab).
+  const bool previous_environment_emptied =
+      parra::EnvironmentIndexMapper(model_).GetVisibleCount(
+          state->active_environment()) == 0;
+
   LOG(INFO) << "parra-ui: native activation moved the active tab to environment '"
-            << owner << "' (was '" << state->active_environment()
-            << "'); adopting it for this window instead of leaving the strip and "
+            << owner << "' (was '" << state->active_environment() << "'"
+            << (previous_environment_emptied
+                    ? "; the previous environment now has no tabs"
+                    : "")
+            << "); adopting it for this window instead of leaving the strip and "
                "the content area disagreeing";
 
   state->SetActiveEnvironment(owner);
@@ -1109,7 +1145,65 @@ void BrowserTabStripController::ExecuteContextMenuCommand(
     tabs::TabInterface* tab,
     TabStripModel::ContextMenuCommand command_id,
     int event_flags) {
-  model_->ExecuteContextMenuCommand(model_->GetIndexOfTab(tab), command_id);
+  const int context_index = model_->GetIndexOfTab(tab);
+
+  // Parra: every close command the tab context menu can issue is decided here, and
+  // the decision is three-valued on purpose.
+  //
+  // Why three values and not a bool: the previous round treated "could not produce
+  // a safe victim set" the same as "this is not a close command", so the caller
+  // fell through to Chromium's native path -- which is the GLOBAL, unfiltered set.
+  // That is precisely the "silently widen the operation" failure the containment
+  // exists to stop. An empty victim set must ABORT.
+  //
+  // What needs guarding, and what does not:
+  //
+  //   * The tab's own close BUTTON goes through
+  //     TabStripModelDelegate::CloseTab(), which closes exactly ONE WebContents.
+  //     No cross-environment reach, not routed through here.
+  //   * CommandCloseTab closes the whole multi-selection; CommandCloseOtherTabs and
+  //     CommandCloseTabsToRight walk the GLOBAL model order; CommandCloseAllTabs
+  //     (web-app windows) also walks it. All four can reach tabs of other
+  //     environments, which are hidden from the strip.
+  //
+  // The close itself still runs through ExecuteCloseCommandWithVictims(), which
+  // keeps Chromium's own group bookkeeping, unload handling and historical-tab
+  // behaviour.
+  const parra::EnvironmentTabOperations::CloseCommandPlan plan =
+      parra::EnvironmentTabOperations::PlanCloseCommand(model_, context_index,
+                                                        command_id);
+
+  switch (plan.disposition) {
+    case parra::EnvironmentTabOperations::CloseCommandDisposition::kNotACloseCommand:
+      break;  // fall through to the native path below
+
+    case parra::EnvironmentTabOperations::CloseCommandDisposition::kCloseVictims:
+      if (model_->ExecuteCloseCommandWithVictims(context_index, command_id,
+                                                 plan.victims)) {
+        return;
+      }
+      // The command was a close command but the model refused to execute it with an
+      // explicit victim list. Do NOT fall back to the native path: that would use a
+      // victim set Parra never approved.
+      LOG(ERROR) << "parra: close command " << static_cast<int>(command_id)
+                 << " could not be executed with an explicit victim list; "
+                    "aborting instead of falling back to the native global close";
+      return;
+
+    case parra::EnvironmentTabOperations::CloseCommandDisposition::kRefuse:
+      // Refused. Narrow a leaking multi-selection so the state is left consistent,
+      // then do nothing. No close, no native fallback.
+      LOG(WARNING) << "parra: refusing close command "
+                   << static_cast<int>(command_id) << " on tab g" << context_index
+                   << ": " << plan.reason
+                   << ". Nothing will be closed; this is deliberate, not a "
+                      "fallback.";
+      parra::EnvironmentTabOperations::ContainCloseCommandToActiveEnvironment(
+          model_, context_index, command_id);
+      return;
+  }
+
+  model_->ExecuteContextMenuCommand(context_index, command_id);
 }
 
 bool BrowserTabStripController::GetContextMenuAccelerator(

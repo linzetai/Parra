@@ -43,6 +43,8 @@ source_set("parra_tabs") {
   sources = [
     "environment_index_mapper.cc",
     "environment_index_mapper.h",
+    "environment_tab_operations.cc",
+    "environment_tab_operations.h",
     "environment_visibility_controller.cc",
     "environment_visibility_controller.h",
     "window_environment_state.cc",
@@ -55,6 +57,7 @@ source_set("parra_tabs") {
     "//chrome/browser/profiles:profile",
     "//chrome/browser/ui/browser_window",
     "//chrome/browser/ui/tabs:tab_enums",
+    "//chrome/browser/ui/tabs:tab_strip",
     "//chrome/browser/ui/tabs:tab_strip_impl",
     "//components/tabs:public",
     "//content/public/browser",

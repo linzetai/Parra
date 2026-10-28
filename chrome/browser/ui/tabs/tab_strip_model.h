@@ -693,6 +693,53 @@ class TabStripModel {
                           const tab_groups::TabGroupId group,
                           const bool add_to_end = false);
 
+  // Embedder hook that may veto adding tabs to a group, checked BEFORE any group
+  // bookkeeping runs.
+  //
+  // Parra uses this to keep a tab group inside a single environment: the tabs
+  // layer cannot depend on //chrome/browser/parra (that would be a GN cycle), so
+  // the policy is injected from above instead of hard-coded here. Arguments are
+  // the tab indices about to be grouped and the target group (nullopt for a
+  // brand-new group).
+  //
+  // Returning false makes the call a no-op. Unset means "always allow", which is
+  // exactly upstream behaviour.
+  using GroupMembershipPolicy =
+      base::RepeatingCallback<bool(const std::vector<int>& indices,
+                                   std::optional<tab_groups::TabGroupId> group)>;
+  void SetGroupMembershipPolicy(GroupMembershipPolicy policy);
+  bool CanAddTabsToGroup(const std::vector<int>& indices,
+                         std::optional<tab_groups::TabGroupId> group) const;
+
+  // Embedder hook that decides the victims of a close command, checked INSIDE
+  // ExecuteContextMenuCommand() and BEFORE any tab is closed.
+  //
+  // Why this lives on the model instead of only in the views controller:
+  // ExecuteContextMenuCommand() has more than one caller. Keyboard
+  // accelerators (IDC_CLOSE_OTHER_TABS, IDC_CLOSE_TABS_TO_RIGHT) in
+  // browser_commands.cc call it DIRECTLY, bypassing BrowserTabStripController
+  // entirely. A policy enforced only in the controller is therefore not enforced
+  // at all for those commands -- the exact "silently widen the operation" hole
+  // the containment exists to close. Putting the decision here means every
+  // caller is covered by construction, including callers added later.
+  //
+  // The callback receives the context index of the command and returns either
+  // "these are the victims" or "refuse". An EMPTY victim list is a REFUSAL, not
+  // "close nothing and fall through": the one thing that must never happen is
+  // continuing into the native global close path.
+  //
+  // Unset means "no policy", so the model behaves exactly like upstream.
+  struct CloseCommandDecision {
+    // True when the command is allowed to proceed, with `victims` as the exact
+    // set to close. False when the command must be refused entirely.
+    bool allowed = true;
+    std::vector<tabs::TabHandle> victims;
+  };
+  using CloseCommandPolicy = base::RepeatingCallback<CloseCommandDecision(
+      int context_index,
+      tabs::TabContextMenuCommand command_id)>;
+  void SetCloseCommandPolicy(CloseCommandPolicy policy);
+
   // Similar to AddToExistingGroup(), but creates a group with id `group` if it
   // doesn't exist. This is only intended to be called from session restore
   // code.
@@ -823,6 +870,34 @@ class TabStripModel {
   void ExecuteCloseTabsCommand(
       base::RepeatingCallback<std::vector<tabs::TabHandle>()> get_tabs_to_close,
       bool delete_groups);
+
+  // Parra: the candidate set a close command WOULD act on, before it runs.
+  //
+  // Exposed publicly so an embedder can narrow the set without reimplementing
+  // any close logic. The returned handles are exactly what the corresponding
+  // ExecuteContextMenuCommand() branch would pass to ExecuteCloseTabsCommand(),
+  // which means every Chromium rule (pinned tabs, focused group, split
+  // membership, collapsed groups, the pinned home tab) is already applied and
+  // the caller can only ever REMOVE entries.
+  //
+  // Only CommandCloseTab, CommandCloseOtherTabs, CommandCloseTabsToRight and
+  // CommandCloseAllTabs are accepted; anything else returns an empty vector.
+  std::vector<tabs::TabHandle> GetCloseCommandCandidates(
+      int context_index,
+      ContextMenuCommand command_id) const;
+
+  // Performs the close for `command_id`, but with `victims` as the set to
+  // remove instead of the command's own choice.
+  //
+  // `victims` must be a subset of GetCloseCommandCandidates(context_index,
+  // command_id) -- the caller's job, since only it knows which of the candidates
+  // it wants to keep. Group-deletion bookkeeping stays with the command so group
+  // semantics cannot drift from upstream.
+  //
+  // Returns false when the command is not a close command.
+  bool ExecuteCloseCommandWithVictims(int context_index,
+                                      ContextMenuCommand command_id,
+                                      std::vector<tabs::TabHandle> victims);
 
   // Adds the tab at `context_index` to the given tab group `group`. If
   // `context_index` is selected the command applies to all selected tabs.
@@ -1172,8 +1247,7 @@ class TabStripModel {
   // Returns true if all the tabs have been deleted. A return value of false
   // means some portion (potentially none) of the WebContents were deleted.
   // WebContents not deleted by this function are processing unload handlers
-  // which may eventually be deleted based on the results of the unload handler.
-  // Additionally processing the unload handlers may result in needing to show
+  // which may eventually be deleted based on the results of the unload handler.  // Additionally processing the unload handlers may result in needing to show
   // UI for the WebContents. See UnloadController for details on how unload
   // handlers are processed.
   bool CloseWebContentses(base::span<content::WebContents* const> items,
@@ -1478,6 +1552,14 @@ class TabStripModel {
   std::unique_ptr<TabGroupModel> group_model_;
 
   raw_ptr<TabStripModelDelegate> delegate_;
+
+  // Optional embedder veto for adding tabs to a group. Unset means "always allow",
+  // which is upstream behaviour. See SetGroupMembershipPolicy().
+  GroupMembershipPolicy group_membership_policy_;
+
+  // Optional embedder decision for close commands. Unset means "no policy", which
+  // is upstream behaviour. See SetCloseCommandPolicy().
+  CloseCommandPolicy close_command_policy_;
 
   bool tab_strip_ui_was_set_ = false;
 

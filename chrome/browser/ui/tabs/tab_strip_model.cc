@@ -2049,6 +2049,12 @@ tab_groups::TabGroupId TabStripModel::AddToNewGroup(
   CHECK(std::ranges::is_sorted(indices));
   CHECK(std::ranges::adjacent_find(indices) == indices.end());
 
+  // Embedder policy (Parra: one environment per group). Checked BEFORE any state
+  // changes so a veto leaves the model untouched.
+  if (!CanAddTabsToGroup(indices, /*group=*/std::nullopt)) {
+    return tab_groups::TabGroupId::GenerateNew();
+  }
+
   // Extensions API may call this function on indices that contain only part of
   // a split. In that case, unsplit said split tabs.
   MaybeRemoveSplitsForUpdate(indices);
@@ -2083,11 +2089,32 @@ void TabStripModel::AddToExistingGroup(const std::vector<int> indices,
   CHECK(ContainsIndex(*(indices.begin())));
   CHECK(ContainsIndex(*(indices.rbegin())));
 
+  // Embedder policy (Parra: one environment per group).
+  if (!CanAddTabsToGroup(indices, group)) {
+    return;
+  }
+
   // Extensions API may call this function on indices that contain only part of
   // a split. In that case, unsplit said split tabs.
   MaybeRemoveSplitsForUpdate(indices);
 
   AddToExistingGroupImpl(indices, group, add_to_end);
+}
+
+void TabStripModel::SetGroupMembershipPolicy(GroupMembershipPolicy policy) {
+  group_membership_policy_ = std::move(policy);
+}
+
+bool TabStripModel::CanAddTabsToGroup(
+    const std::vector<int>& indices,
+    std::optional<tab_groups::TabGroupId> group) const {
+  if (!group_membership_policy_)
+    return true;
+  return group_membership_policy_.Run(indices, group);
+}
+
+void TabStripModel::SetCloseCommandPolicy(CloseCommandPolicy policy) {
+  close_command_policy_ = std::move(policy);
 }
 
 void TabStripModel::AddToGroupForRestore(const std::vector<int>& indices,
@@ -2829,6 +2856,62 @@ bool TabStripModel::IsContextMenuCommandEnabled(
   NOTREACHED() << "Unsupported command: " << command_id;
 }
 
+std::vector<tabs::TabHandle> TabStripModel::GetCloseCommandCandidates(
+    int context_index,
+    ContextMenuCommand command_id) const {
+  if (!ContainsIndex(context_index)) {
+    return {};
+  }
+  const tabs::TabHandle context_tab = GetTabAtIndex(context_index)->GetHandle();
+
+  switch (command_id) {
+    case CommandCloseTab:
+      return GetTabsForCommand(context_tab);
+    case CommandCloseOtherTabs:
+    case CommandCloseTabsToRight:
+      return GetTabsClosedByCommand(context_tab, command_id);
+    case CommandCloseAllTabs: {
+      // Mirrors the CommandCloseAllTabs branch below: everything after the
+      // pinned home tab, in global model order.
+      std::vector<tabs::TabHandle> handles;
+      for (auto it = ++begin(); it != end(); ++it) {
+        handles.push_back((*it)->GetHandle());
+      }
+      return handles;
+    }
+    default:
+      return {};
+  }
+}
+
+bool TabStripModel::ExecuteCloseCommandWithVictims(
+    int context_index,
+    ContextMenuCommand command_id,
+    std::vector<tabs::TabHandle> victims) {
+  switch (command_id) {
+    case CommandCloseTab:
+      ExecuteCloseTabsCommand(
+          base::BindRepeating(
+              [](std::vector<tabs::TabHandle> set) { return set; },
+              std::move(victims)),
+          /*delete_groups=*/true);
+      return true;
+
+    case CommandCloseOtherTabs:
+    case CommandCloseTabsToRight:
+    case CommandCloseAllTabs:
+      ExecuteCloseTabsCommand(
+          base::BindRepeating(
+              [](std::vector<tabs::TabHandle> set) { return set; },
+              std::move(victims)),
+          /*delete_groups=*/command_id == CommandCloseAllTabs);
+      return true;
+
+    default:
+      return false;
+  }
+}
+
 void TabStripModel::ExecuteContextMenuCommand(int context_index,
                                               ContextMenuCommand command_id) {
   // The tab strip may have been modified while the context menu was open,
@@ -2836,6 +2919,32 @@ void TabStripModel::ExecuteContextMenuCommand(int context_index,
   if (!ContainsIndex(context_index)) {
     return;
   }
+
+  // Embedder hook, consulted BEFORE anything is closed.
+  //
+  // This is placed here, and not only in the views controller, because keyboard
+  // accelerators (IDC_CLOSE_OTHER_TABS, IDC_CLOSE_TABS_TO_RIGHT) reach this method
+  // directly. A veto that lived only in the controller would be silently absent
+  // for those commands. Returning early -- never falling through -- is the whole
+  // point: an empty or rejected victim set must ABORT, not degrade into the
+  // global close below.
+  if (close_command_policy_) {
+    const CloseCommandDecision decision =
+        close_command_policy_.Run(context_index, command_id);
+    if (!decision.allowed) {
+      return;
+    }
+    if (!decision.victims.empty()) {
+      // The policy produced an explicit, approved victim set: close exactly
+      // those and nothing else.
+      if (ExecuteCloseCommandWithVictims(context_index, command_id,
+                                         std::move(decision.victims))) {
+        return;
+      }
+      return;
+    }
+  }
+
   tabs::TabHandle context_tab = GetTabAtIndex(context_index)->GetHandle();
   switch (command_id) {
     case CommandNewTabToRight: {

@@ -15,5 +15,6 @@ const char kParraPocVisibility[] = "parra-poc-visibility";
 const char kParraPocVisibilityCycles[] = "parra-poc-visibility-cycles";
 const char kParraPocNoInitialTabs[] = "parra-poc-no-initial-tabs";
 const char kParraPocSelfTest[] = "parra-poc-selftest";
+const char kParraPocTabOpsSelfTest[] = "parra-poc-tabops-selftest";
 
 }  // namespace parra::switches

@@ -58,6 +58,7 @@
 #include "chrome/browser/parra/parra_index_mapper_selftest.h"
 #include "chrome/browser/parra/parra_lifecycle_poc.h"
 #include "chrome/browser/parra/parra_startup.h"
+#include "chrome/browser/parra/parra_tab_ops_selftest.h"
 #include "chrome/browser/parra/parra_visibility_poc.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.h"
@@ -1757,6 +1758,11 @@ void ChromeBrowserMainParts::PostBrowserStart() {
   // unless --parra-poc-selftest was supplied. Scheduled rather than run inline
   // so it observes a fully populated strip.
   parra::MaybeRunIndexMapperSelfTest();
+
+  // Parra Phase 2.2B-2.1: close-command containment and creation-invariant
+  // checks. No-op unless --parra-poc-tabops-selftest was supplied. Scheduled on a
+  // delay so the 3x3 layout has committed (the checks read real partitions).
+  parra::MaybeRunTabOpsSelfTest();
 
   browser_process_->browser_policy_connector()->OnBrowserStarted();
 

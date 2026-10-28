@@ -75,6 +75,8 @@ source_set("parra_startup") {
     "parra_lifecycle_poc.h",
     "parra_startup.cc",
     "parra_startup.h",
+    "parra_tab_ops_selftest.cc",
+    "parra_tab_ops_selftest.h",
     "parra_visibility_poc.cc",
     "parra_visibility_poc.h",
   ]

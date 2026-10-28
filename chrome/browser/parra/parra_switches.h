@@ -83,6 +83,15 @@ extern const char kParraPocNoInitialTabs[];
 // be combined with a session-restore run that is being measured.
 extern const char kParraPocSelfTest[];
 
+// Phase 2.2B-2.1 tab-operation self-test: runs the close-command containment and
+// the creation-invariant checks described in docs/parra/43 and 44, then exits.
+//
+//   --parra-poc-tabops-selftest
+//
+// Destroys tabs (that is the thing under test), so it must run alone. It needs the
+// 3x3 layout from --parra-poc-visibility.
+extern const char kParraPocTabOpsSelfTest[];
+
 }  // namespace parra::switches
 
 #endif  // CHROME_BROWSER_PARRA_PARA_SWITCHES_H_

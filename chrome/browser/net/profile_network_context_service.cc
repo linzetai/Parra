@@ -1351,12 +1351,16 @@ void ProfileNetworkContextService::ConfigureNetworkContextParamsInternal(
   }
   base::FilePath path(GetPartitionPath(relative_partition_path));
 
-  // Parra PoC: give each environment's StoragePartition its own host mapping
+  // Parra: give each environment's StoragePartition its own host mapping
   // rules. The rules are scoped to this NetworkContext, so environments can
-  // resolve the same hostname to different addresses at the same time. This is
-  // a no-op unless --parra-poc-environments was supplied.
+  // resolve the same hostname to different addresses at the same time.
+  //
+  // Answered by THIS profile's EnvironmentStore: a profile whose environments
+  // were created through the store would otherwise be handed the command-line
+  // definitions (or nothing), and its pages would silently resolve to real DNS.
   const std::string parra_host_mapping_rules =
-      parra::GetHostMappingRulesForPartitionPath(relative_partition_path);
+      parra::GetHostMappingRulesForPartitionPath(profile_,
+                                                relative_partition_path);
   if (!parra_host_mapping_rules.empty()) {
     network_context_params->host_mapping_rules = parra_host_mapping_rules;
   }

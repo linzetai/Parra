@@ -78,13 +78,18 @@ PagePartition InspectPagePartition(const content::WebContents* contents) {
 
   const content::StoragePartitionConfig config =
       site_instance->GetSecurityPrincipal().GetStoragePartitionConfig();
-  const std::string_view named = GetEnvironmentIdForStoragePartition(config);
+  // STRUCTURAL lookup, not definition-aware: a page living in `parra/gone` (an
+  // environment that has since been deleted) must be reported as living in
+  // 'gone', not as Personal. Using the definition-aware variant here would collapse
+  // "the environment was deleted" into "the page is in the default partition",
+  // and every caller would then treat a foreign page as a stock one.
+  const std::string named = GetEnvironmentIdFromPartitionConfig(config);
   if (named.empty()) {
     result.state = PagePartitionState::kDefaultPartition;
     result.environment_id = kDefaultEnvironmentId;
   } else {
     result.state = PagePartitionState::kNamedPartition;
-    result.environment_id = std::string(named);
+    result.environment_id = named;
   }
   return result;
 }
@@ -93,15 +98,11 @@ PagePartition InspectPagePartition(const content::WebContents* contents) {
 //
 // Empty means either "the default partition" or "no site assigned yet"; callers
 // that need to tell those apart must use InspectPagePartition().
-std::string_view EnvironmentIdFromContents(const content::WebContents* contents) {
+std::string EnvironmentIdFromContents(const content::WebContents* contents) {
   const PagePartition partition = InspectPagePartition(contents);
-  if (partition.state == PagePartitionState::kSiteNotAssigned)
-    return std::string_view();
-  return GetEnvironmentIdForStoragePartition(
-      const_cast<content::WebContents*>(contents)
-          ->GetSiteInstance()
-          ->GetSecurityPrincipal()
-          .GetStoragePartitionConfig());
+  if (partition.state != PagePartitionState::kNamedPartition)
+    return std::string();
+  return partition.environment_id;
 }
 
 }  // namespace
@@ -119,85 +120,97 @@ ResolvedTabEnvironment EnvironmentTabRouter::ResolveForNewTab(
     content::WebContents* source_contents,
     const std::string& explicit_environment_id) {
   ResolvedTabEnvironment resolved;
-  if (!profile || !IsParraPocEnabled())
+  if (!profile)
     return resolved;
 
-  resolved.active = true;
   resolved.requested_environment_id = explicit_environment_id;
 
-  // The explicit id wins when present; see the header for why that is safe (only
-  // chrome's own tab-creation command writes it, never renderer-controlled data).
+  // ---------------------------------------------------------------------
+  // Step 1: which environment did anybody actually NAME?
+  //
+  // Three sources, in priority order. Each is a CLAIM about the page that is
+  // about to be created; Step 2 decides whether the claim can be honoured.
+  // ---------------------------------------------------------------------
+  std::string desired;
+  EnvironmentOrigin origin = EnvironmentOrigin::kParraDisabled;
+
   if (!explicit_environment_id.empty()) {
-    if (EnvironmentRegistry::GetInstance()->Find(explicit_environment_id)) {
-      resolved.environment_id = explicit_environment_id;
-      resolved.origin = EnvironmentOrigin::kExplicitRequest;
-      resolved.partition = GetStoragePartitionConfigForEnvironment(
-          profile, resolved.environment_id);
-
-      // The request must actually be honorable. If the environment maps back to the
-      // DEFAULT partition under a non-default name, honoring it would mean creating
-      // the page in Personal while the caller believes otherwise -- the exact silent
-      // downgrade this phase must not allow.
-      const std::string_view named_by_partition =
-          GetEnvironmentIdForStoragePartition(resolved.partition);
-      const std::string effective =
-          named_by_partition.empty() ? std::string(kDefaultEnvironmentId)
-                                     : std::string(named_by_partition);
-      if (effective != resolved.environment_id) {
-        resolved.failure = "requested environment '" + resolved.environment_id +
-                           "' resolves to partition '" + effective +
-                           "', which is a different environment";
-        LOG(ERROR) << "parra: refusing new tab: " << resolved.failure;
-      }
-      return resolved;
-    }
-
-    // An id that does not name a configured environment must NOT be turned into a
-    // private partition no other tab shares, and must NOT be silently downgraded to
-    // Personal either -- the caller asked for something we cannot provide.
-    resolved.failure =
-        "requested environment '" + explicit_environment_id +
-        "' is not configured";
-    LOG(ERROR) << "parra: refusing new tab: " << resolved.failure;
-    return resolved;
-  }
-
-  if (!source_contents) {
-    // A window being created from scratch, or a caller that legitimately has no
-    // source (startup, restore). Personal is what a stock tab would be.
-    resolved.environment_id = kDefaultEnvironmentId;
-    resolved.origin = EnvironmentOrigin::kNoSourceDefault;
-    resolved.partition =
-        GetStoragePartitionConfigForEnvironment(profile, resolved.environment_id);
-    return resolved;
-  }
-
-  if (EnvironmentTag::HasTag(source_contents)) {
+    // Only chrome's own new-tab command writes this, and only from the window's
+    // active environment -- never from renderer-controlled data. See the header.
+    desired = explicit_environment_id;
+    origin = EnvironmentOrigin::kExplicitRequest;
+  } else if (source_contents && EnvironmentTag::HasTag(source_contents)) {
     // The authoritative answer: the source page's own tag.
-    resolved.environment_id = EnvironmentTag::Get(source_contents);
-    resolved.origin = EnvironmentOrigin::kInheritedFromTag;
-  } else {
-    // Untagged. Distinguish the two meanings that Get() cannot express:
-    //
-    //  - the page's SiteInstance is pinned to a Parra partition => the
-    //    partition itself names the environment (this happens for tabs created
-    //    before tagging was introduced, and for any content whose environment
-    //    was bound by partition only). Inheriting it is safe and strictly
-    //    better than dropping the page into Personal.
-    //  - the page is in the default partition and untagged => it is a stock
-    //    Chromium tab. Personal is correct.
-    const std::string_view from_partition = EnvironmentIdFromContents(source_contents);
-    if (!from_partition.empty()) {
-      resolved.environment_id = std::string(from_partition);
-      resolved.origin = EnvironmentOrigin::kInheritedFromPartition;
-    } else {
-      resolved.environment_id = kDefaultEnvironmentId;
-      resolved.origin = EnvironmentOrigin::kUntaggedSourceDefault;
-    }
+    desired = EnvironmentTag::Get(source_contents);
+    origin = EnvironmentOrigin::kInheritedFromTag;
+  } else if (source_contents) {
+    // Untagged. The page's SiteInstance may still be pinned to a Parra partition
+    // (tabs created before tagging existed, or content bound by partition only).
+    // Inheriting it is safe and strictly better than dropping the page into
+    // Personal.
+    desired = EnvironmentIdFromContents(source_contents);
+    if (!desired.empty())
+      origin = EnvironmentOrigin::kInheritedFromPartition;
   }
 
-  resolved.partition =
-      GetStoragePartitionConfigForEnvironment(profile, resolved.environment_id);
+  // ---------------------------------------------------------------------
+  // Step 2a: nobody named an environment -> a stock Chromium tab.
+  //
+  // This is the only branch allowed to reach the default partition without a
+  // definition check, and it stays exactly as upstream: a navigation that never
+  // mentioned an environment must not be affected by Parra being configured.
+  // ---------------------------------------------------------------------
+  if (desired.empty()) {
+    if (!IsEnabled())
+      return resolved;  // Parra inactive: plain upstream path, unchanged.
+
+    resolved.active = true;
+    resolved.environment_id = kDefaultEnvironmentId;
+    resolved.origin = source_contents ? EnvironmentOrigin::kUntaggedSourceDefault
+                                      : EnvironmentOrigin::kNoSourceDefault;
+    resolved.partition =
+        GetStoragePartitionConfigForEnvironment(profile, kDefaultEnvironmentId);
+    return resolved;
+  }
+
+  // ---------------------------------------------------------------------
+  // Step 2b: somebody NAMED an environment -> it must be honourable or the whole
+  // creation is refused.
+  //
+  // Note this runs even when IsEnabled() is false. That is deliberate and is the
+  // core of the fail-closed contract: a page whose opener lives in parra/test-a
+  // exists (its partition is fixed), so its popups must join test-a. Falling
+  // through to the upstream path because "Parra looks disabled" would create the
+  // popup in Personal, where it reads Personal's cookies -- a silent isolation
+  // break caused by a configuration problem rather than by a routing bug.
+  // ---------------------------------------------------------------------
+  resolved.active = true;
+
+  const PartitionResolution lookup =
+      ResolvePartitionForEnvironment(profile, desired);
+  if (!lookup.ok()) {
+    resolved.failure = lookup.failure;
+    LogEnvironmentGuardRefusal("new_tab", desired, lookup.failure);
+    return resolved;
+  }
+
+  resolved.environment_id = lookup.environment_id;
+  resolved.partition = lookup.config;
+  resolved.origin = origin;
+
+  // The resolved environment must be the one that was asked for. A definition
+  // that maps back to the default partition under a different name would put the
+  // page in Personal while the caller believes it is isolated.
+  const std::string effective =
+      lookup.lookup == EnvironmentLookup::kPersonal
+          ? std::string(kDefaultEnvironmentId)
+          : lookup.environment_id;
+  if (effective != desired) {
+    resolved.failure = "requested environment '" + desired +
+                       "' resolves to '" + effective +
+                       "', which is a different environment";
+    LogEnvironmentGuardRefusal("new_tab", desired, resolved.failure);
+  }
   return resolved;
 }
 
@@ -285,16 +298,18 @@ bool EnvironmentTabRouter::TagNewContents(
 void EnvironmentTabRouter::CopyEnvironmentFrom(
     const content::WebContents* source,
     content::WebContents* destination) {
-  if (!source || !destination || !IsParraPocEnabled())
+  if (!source || !destination || !IsEnabled())
     return;
 
   // Prefer the partition the clone actually landed in, for the same reason
   // TagNewContents() does: the partition is what decides which cookies the page
   // will read, so it must win over any inherited id.
-  const std::string_view partition_environment =
-      EnvironmentIdFromContents(destination);
+  //
+  // Owned `std::string`: EnvironmentIdFromContents() returns by value, so binding
+  // its result to a string_view would dangle before the comparison below.
+  const std::string partition_environment = EnvironmentIdFromContents(destination);
   if (!partition_environment.empty()) {
-    EnvironmentTag::Set(destination, std::string(partition_environment));
+    EnvironmentTag::Set(destination, partition_environment);
     return;
   }
 
@@ -313,12 +328,25 @@ void EnvironmentTabRouter::VerifyContentsMatchesPartition(
     Profile* profile,
     const content::WebContents* contents,
     const char* when) {
-  if (!contents || !profile || !IsParraPocEnabled())
+  if (!contents || !profile)
     return;
 
   // Reuse the same partition reader as every other function in this file, so the
   // invariant is checked against the exact value the tag was derived from.
   const PagePartition partition = InspectPagePartition(contents);
+
+  // Gate on the PAGE, not on the process-level switch.
+  //
+  // Gating on IsEnabled() would disable the check exactly when the configuration
+  // is damaged -- the moment a tag/partition disagreement is most likely. A page
+  // that carries a tag or lives in a Parra partition is part of the isolation
+  // contract whether or not the configuration still loads, so it is always
+  // checked.
+  if (!EnvironmentTag::HasTag(contents) &&
+      partition.state != PagePartitionState::kNamedPartition) {
+    return;
+  }
+
   const std::string tag_environment = EnvironmentTag::Get(contents);
 
   if (partition.state == PagePartitionState::kSiteNotAssigned) {
@@ -351,12 +379,19 @@ bool EnvironmentTabRouter::TagMatchesCommittedPartition(
     const content::WebContents* contents,
     std::string* tag_environment,
     std::string* actual_environment) {
-  if (!contents || !IsParraPocEnabled())
+  if (!contents)
     return true;
 
   const PagePartition partition = InspectPagePartition(contents);
   if (partition.state == PagePartitionState::kSiteNotAssigned)
     return true;  // nothing committed; nothing to compare
+
+  // Same reasoning as VerifyContentsMatchesPartition(): a page that carries no
+  // tag and lives in the default partition is a stock tab and is vacuously fine.
+  if (!EnvironmentTag::HasTag(contents) &&
+      partition.state != PagePartitionState::kNamedPartition) {
+    return true;
+  }
 
   if (tag_environment)
     *tag_environment = EnvironmentTag::Get(contents);

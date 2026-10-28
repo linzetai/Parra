@@ -88,7 +88,13 @@ bool ParraCreateParamsForRestoredTab(
       ParraEnvironmentIdFromExtraData(extra_data);
 
   // Fast path: no Parra involvement at all (the common upstream case).
-  if (environment_id.empty() && !parra::IsParraPocEnabled())
+  //
+  // An EMPTY id means the tab never recorded an environment -- not that one went
+  // missing -- so it is safe to leave it on the upstream path even if Parra is
+  // configured. A non-empty id always goes through the fail-closed resolver below,
+  // even when Parra appears disabled, because the tab demonstrably belonged to an
+  // environment whose partition still exists on disk.
+  if (environment_id.empty())
     return true;
 
   const parra::ResolvedEnvironment resolved = parra::ResolveEnvironmentForRestore(
@@ -96,28 +102,39 @@ bool ParraCreateParamsForRestoredTab(
 
   switch (resolved.status) {
     case parra::EnvironmentResolution::kDefaultPartition:
-      // Personal (or a tab that predates Parra): keep upstream behavior.
+      // Personal: keep upstream behavior.
       return true;
 
-    case parra::EnvironmentResolution::kDedicatedPartition: {
+    case parra::EnvironmentResolution::kDedicatedPartition:
+    case parra::EnvironmentResolution::kDisabledEnvironment: {
       // Restoring into a dedicated partition. Use the tab's own first URL as
       // the SiteInstance URL so process allocation matches the eventual
       // navigation, and mark the partition fixed so later cross-site
       // navigations stay inside it.
+      //
+      // A disabled environment restores exactly like an enabled one: its
+      // partition and data are intact, only activation is blocked. Refusing it
+      // would destroy the user's tabs for a switch that is meant to be
+      // reversible.
       const GURL& site_url = entries.empty() ? GURL() : entries.front()->GetURL();
       create_params->site_instance =
           content::SiteInstance::CreateForFixedStoragePartition(
               browser->GetProfile(), site_url, resolved.config);
       LOG(INFO) << "parra-restore: tab bound to environment '"
                 << environment_id << "' partition=" << resolved.config
-                << " site_url=" << site_url.possibly_invalid_spec();
+                << " site_url=" << site_url.possibly_invalid_spec()
+                << (resolved.status ==
+                            parra::EnvironmentResolution::kDisabledEnvironment
+                        ? " (environment is disabled; restored but cannot be "
+                          "activated)"
+                        : "");
       return true;
     }
 
     case parra::EnvironmentResolution::kUnknownEnvironment:
-      LOG(ERROR) << "parra-restore: environment '" << environment_id
-                 << "' no longer exists; refusing to restore this tab on the "
-                    "default partition";
+      parra::LogEnvironmentGuardRefusal(
+          "restore", environment_id,
+          "the environment recorded for this tab no longer exists");
       return false;
   }
   return true;

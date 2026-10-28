@@ -6,10 +6,28 @@
 
 #include "base/check.h"
 #include "base/logging.h"
+#include "chrome/browser/parra/parra_storage_partition_util.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
 #include "content/public/browser/web_contents.h"
 
 namespace parra {
+
+namespace {
+
+// The profile owning this strip, or null when the model has no resolvable window
+// (unit tests, teardown). Deliberately never guesses: a wrong profile would make
+// the environment-existence check answer for the wrong profile.
+Profile* ProfileForModel(TabStripModel* model) {
+  if (!model || !model->delegate())
+    return nullptr;
+  BrowserWindowInterface* window = model->delegate()->GetBrowserWindowInterface();
+  return window ? window->GetProfile() : nullptr;
+}
+
+}  // namespace
 
 EnvironmentVisibilityController::EnvironmentVisibilityController(
     TabStripModel* model)
@@ -22,8 +40,25 @@ EnvironmentVisibilityController::~EnvironmentVisibilityController() = default;
 bool EnvironmentVisibilityController::SwitchTo(
     const std::string& environment_id) {
   if (environment_id.empty()) {
-    LOG(ERROR) << "parra-vis: refusing to switch to an empty environment id";
+    LogEnvironmentGuardRefusal("switch", environment_id,
+                               "empty environment id");
     return false;
+  }
+
+  // The environment must exist. Refusing here is what stops a stale id (a
+  // bookmarklet, a restored window, a deleted environment) from putting the
+  // window into a state whose only visible outcome would be "it showed Personal
+  // instead", which is the silent downgrade this project must never produce.
+  //
+  // The reserved `personal` environment always resolves, so switching to it keeps
+  // working even when no environments are configured.
+  if (Profile* profile = ProfileForModel(model_)) {
+    const PartitionResolution lookup =
+        ResolvePartitionForEnvironment(profile, environment_id);
+    if (!lookup.ok()) {
+      LogEnvironmentGuardRefusal("switch", environment_id, lookup.failure);
+      return false;
+    }
   }
 
   // Refuse to switch to an environment with no tabs. Doing so would leave the

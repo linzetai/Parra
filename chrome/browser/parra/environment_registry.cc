@@ -174,11 +174,41 @@ content::StoragePartitionConfig EnvironmentRegistry::GetStoragePartitionConfig(
     return content::StoragePartitionConfig::CreateDefault(browser_context);
   }
 
-  return content::StoragePartitionConfig::Create(
+  // OTR profiles must never persist partition data.
+  //
+  // StoragePartitionConfig::Create() already forces `in_memory ||
+  // IsOffTheRecord()` (storage_partition_config.cc:39), so passing false here is
+  // currently harmless. It is passed explicitly anyway, for two reasons:
+  //
+  //   1. The safety of an OTR profile then does not depend on a distant
+  //      implementation detail that nothing in this file points at. If that
+  //      coercion were ever narrowed, this call site would not silently start
+  //      writing an incognito environment's cookies into the parent profile's
+  //      Storage/ext/parra directory -- which is the same directory the regular
+  //      profile uses, because OffTheRecordProfileImpl::GetPath() returns the
+  //      PARENT's path (off_the_record_profile_impl.cc:354-356) and the
+  //      partition path is a pure function of (domain, name).
+  //   2. It documents the intent at the point where the decision is made.
+  const bool in_memory = browser_context->IsOffTheRecord();
+  content::StoragePartitionConfig config = content::StoragePartitionConfig::Create(
       browser_context,
       /*partition_domain=*/kParraPartitionDomain,
       /*partition_name=*/std::string(environment_id),
-      /*in_memory=*/false);
+      /*in_memory=*/in_memory);
+
+  // Invariant, checked rather than assumed: a config handed out for an OTR
+  // profile must be in-memory. This is the only assertion that would catch a
+  // future regression in the line above.
+  if (browser_context->IsOffTheRecord() && !config.in_memory()) {
+    LOG(ERROR) << "parra-partition: INVARIANT VIOLATED: OTR environment '"
+               << environment_id
+               << "' produced a PERSISTENT partition config; refusing to hand "
+                  "it out (incognito data would land in the parent profile's "
+                  "Storage directory)";
+    return content::StoragePartitionConfig::CreateDefault(browser_context);
+  }
+
+  return config;
 }
 
 bool EnvironmentRegistry::IsParraPartition(
@@ -230,6 +260,12 @@ base::FilePath EnvironmentRegistry::GetRelativePartitionPathForConfig(
 
 std::string EnvironmentRegistry::GetHostMappingRulesForPartitionPath(
     const base::FilePath& relative_partition_path) const {
+  // This is a pure function of (domain, name) and deliberately ignores
+  // in_memory: an OTR environment with the same id as a regular one must get the
+  // same routing, otherwise the same URL would reach different backends depending
+  // on whether the window is incognito. Data isolation is handled by the
+  // in_memory flag on the StoragePartitionConfig, not by the rules.
+  //
   // The empty path IS the default partition. An environment that maps to the
   // default partition (the reserved `personal` environment) still needs its
   // host rules, otherwise its tabs cannot resolve the test hostname at all and

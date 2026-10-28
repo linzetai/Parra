@@ -621,8 +621,12 @@ std::unique_ptr<content::WebContents> CreateTargetContents(
   // caller skip the tab insertion, so no page is ever navigated in an environment
   // other than the one that was asked for.
   if (parra_environment.active && !parra_environment.ok()) {
-    LOG(ERROR) << "parra: not creating target contents for url=" << url.spec()
-               << ": " << parra_environment.failure;
+    parra::LogEnvironmentGuardRefusal("target_contents",
+                                      parra_environment.environment_id.empty()
+                                          ? parra_environment
+                                                .requested_environment_id
+                                          : parra_environment.environment_id,
+                                      parra_environment.failure);
     return nullptr;
   }
 
@@ -650,6 +654,9 @@ std::unique_ptr<content::WebContents> CreateTargetContents(
                   "instead of letting the first navigation land in '"
                << parra::kDefaultEnvironmentId << "'. Requested environment was '"
                << parra_environment.environment_id << "'.";
+    parra::LogEnvironmentGuardRefusal(
+        "target_contents", parra_environment.environment_id,
+        "empty-document URL cannot be pinned to a StoragePartition");
     return nullptr;
   }
 
@@ -709,10 +716,10 @@ std::unique_ptr<content::WebContents> CreateTargetContents(
   // intended environment would read another environment's cookies.
   if (!parra::EnvironmentTabRouter::TagNewContents(target_contents.get(),
                                                    parra_environment)) {
-    LOG(ERROR) << "parra: discarding target contents for url=" << url.spec()
-               << " because its StoragePartition does not match the resolved "
-                  "environment '"
-               << parra_environment.environment_id << "'";
+    parra::LogEnvironmentGuardRefusal(
+        "target_contents", parra_environment.environment_id,
+        "the created WebContents landed in a different StoragePartition than "
+        "the resolved environment");
     return nullptr;
   }
 
@@ -1114,13 +1121,17 @@ base::WeakPtr<content::NavigationHandle> NavigateImpl(
     // papered over by writing a tag the page does not honour, and it must not be
     // inserted: the page would then read another environment's cookies. Refusing
     // here leaves the window unchanged.
+    // Resolved exactly once: calling the router twice could in principle answer
+    // differently (the source page's tag is read fresh each time), and tagging
+    // with one answer while reporting another would make the log lie.
+    const parra::ResolvedTabEnvironment parra_insert_environment =
+        ResolveNewTabEnvironment(*params);
     if (!parra::EnvironmentTabRouter::TagNewContents(
-            params->contents_to_insert.get(),
-            ResolveNewTabEnvironment(*params))) {
-      LOG(ERROR) << "parra: refusing to insert contents_to_insert for url="
-                 << params->url.spec()
-                 << ": its StoragePartition does not match the resolved "
-                    "environment";
+            params->contents_to_insert.get(), parra_insert_environment)) {
+      parra::LogEnvironmentGuardRefusal(
+          "tab_insert", parra_insert_environment.environment_id,
+          "the incoming WebContents landed in a different StoragePartition "
+          "than the resolved environment");
       params->navigated_or_inserted_contents = nullptr;
       return nullptr;
     }

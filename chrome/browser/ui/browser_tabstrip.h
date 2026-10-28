@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_BROWSER_TABSTRIP_H_
 
 #include <optional>
+#include <string>
 
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/navigator/browser_navigator_params.h"
@@ -32,6 +33,12 @@ namespace chrome {
 // Adds a tab to the tab strip of the specified browser and loads |url| into it.
 // If |url| is an empty URL, then the new tab-page is laoded. An |index| of -1
 // means to append it to the end of the tab strip.
+//
+// Parra: `parra_environment_id` names the environment the new tab must belong to,
+// or is empty to derive it from the source page (the normal rule). Only chrome's
+// new-tab command passes a non-empty value, and only when the window's current
+// environment has no tab that could act as the source. See
+// NavigateParams::parra_environment_id.
 content::WebContents* AddAndReturnTabAt(
     BrowserWindowInterface* browser,
     const GURL& url,
@@ -39,7 +46,8 @@ content::WebContents* AddAndReturnTabAt(
     bool foreground,
     std::optional<tab_groups::TabGroupId> group = std::nullopt,
     bool pinned = false,
-    std::optional<NavigateParams::WindowAction> window_action = std::nullopt);
+    std::optional<NavigateParams::WindowAction> window_action = std::nullopt,
+    const std::string& parra_environment_id = std::string());
 
 // Same as above, but eats the return value to make Bind*() easier.
 void AddTabAt(

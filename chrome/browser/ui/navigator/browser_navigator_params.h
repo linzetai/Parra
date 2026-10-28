@@ -335,6 +335,25 @@ struct NavigateParams {
   // an about:blank or a data url navigation.
   scoped_refptr<content::SiteInstance> source_site_instance;
 
+  // Parra: the environment id the caller has ALREADY decided this new tab
+  // belongs to, when the decision cannot be derived from the source tab.
+  //
+  // Empty means "let EnvironmentTabRouter decide", which is the correct default
+  // for every in-page path: window.open(), target=_blank, ctrl+click, bookmarks
+  // and history all derive the environment from the page that initiated them.
+  //
+  // There is exactly one case that needs it: Ctrl+T (and the strip's `+`) while
+  // the current environment is EMPTY. The window then has no tab of that
+  // environment, so the only tab that could act as "the source" is another
+  // environment's, and inheriting from it would silently create the new tab in
+  // the wrong environment. The caller knows the intended environment from the
+  // window state, so it states it explicitly instead of letting the router guess.
+  //
+  // Not an override: when it names an environment the router validates that the
+  // environment exists, and it never changes an environment that came from a
+  // real source page.
+  std::string parra_environment_id;
+
   // Optional URLLoaderFactory to facilitate blob URL loading.
   scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory;
 

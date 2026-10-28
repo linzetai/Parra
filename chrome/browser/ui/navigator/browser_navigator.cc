@@ -26,6 +26,8 @@
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/parra/environment_tag.h"
+#include "chrome/browser/parra/environment_tab_router.h"
 #include "chrome/browser/parra/parra_storage_partition_util.h"
 #include "chrome/browser/renderer_host/chrome_navigation_ui_data.h"
 #include "chrome/browser/tab_contents/tab_util.h"
@@ -565,45 +567,92 @@ Profile* GetSourceProfile(NavigateParams* params) {
   return params->initiating_profile;
 }
 
-// Parra PoC: resolves the StoragePartitionConfig a new tab should join.
+// Parra PoC: the page whose environment a new tab must inherit.
 //
-// The environment is inherited from whichever tab initiated the navigation, so
+// The environment is inherited from whichever page initiated the navigation, so
 // ctrl+click / target=_blank / window.open / "open link in new tab" all stay
-// inside the originating environment. When there is no initiator we fall back
-// to the browser's active tab, which is the documented product behavior ("new
-// tabs belong to the currently active environment").
+// inside the originating environment. When there is no initiator we fall back to
+// the browser's active tab, which is what makes Ctrl+T and the strip's `+`
+// button land in the environment the user is currently looking at.
 //
-// Returns the default config whenever the PoC is off or no environment is
-// active, in which case callers must take the plain upstream path.
-content::StoragePartitionConfig GetInheritedPartitionConfig(
+// Note this deliberately ignores the disposition: what matters is who asked, not
+// where the new tab is going to be shown.
+content::WebContents* GetEnvironmentSourceContents(const NavigateParams& params) {
+  if (params.source_contents)
+    return params.source_contents;
+
+  if (!params.browser)
+    return nullptr;
+
+  TabStripModel* tab_strip_model = params.browser->GetTabStripModel();
+  return tab_strip_model ? tab_strip_model->GetActiveWebContents() : nullptr;
+}
+
+// Parra PoC: resolves the environment (and therefore the StoragePartition) a new
+// tab should join.
+//
+// Delegated entirely to EnvironmentTabRouter so there is exactly one definition
+// of environment inheritance in the browser. The router inherits from the source
+// page's EnvironmentTag first and from its StoragePartition second, and only
+// falls back to the default environment when there is no source at all -- it
+// never guesses from a URL.
+parra::ResolvedTabEnvironment ResolveNewTabEnvironment(
     const NavigateParams& params) {
-  if (!parra::IsParraPocEnabled())
-    return content::StoragePartitionConfig();
+  if (!params.browser)
+    return parra::ResolvedTabEnvironment();
 
-  content::WebContents* source_contents = params.source_contents;
-  if (!source_contents && params.browser) {
-    TabStripModel* tab_strip_model = params.browser->GetTabStripModel();
-    if (tab_strip_model)
-      source_contents = tab_strip_model->GetActiveWebContents();
-  }
-  if (!source_contents)
-    return content::StoragePartitionConfig();
-
-  content::SiteInstance* site_instance = source_contents->GetSiteInstance();
-  if (!site_instance)
-    return content::StoragePartitionConfig();
-
-  const content::StoragePartitionConfig config =
-      site_instance->GetSecurityPrincipal().GetStoragePartitionConfig();
-  if (!parra::IsEnvironmentStoragePartition(config))
-    return content::StoragePartitionConfig();
-
-  return config;
+  return parra::EnvironmentTabRouter::ResolveForNewTab(
+      params.browser->GetProfile(), GetEnvironmentSourceContents(params),
+      params.parra_environment_id);
 }
 
 std::unique_ptr<content::WebContents> CreateTargetContents(
     const NavigateParams& params,
     const GURL& url) {
+  // Parra PoC: resolve the environment BEFORE the SiteInstance is built, so the
+  // new page is bound to the right StoragePartition before its first request can
+  // be issued. This is the single most important ordering constraint in the tab
+  // creation path: there is no supported way to move a live page between
+  // partitions afterwards.
+  const parra::ResolvedTabEnvironment parra_environment =
+      ResolveNewTabEnvironment(params);
+
+  // Parra: a refused route must create nothing at all. Returning null makes the
+  // caller skip the tab insertion, so no page is ever navigated in an environment
+  // other than the one that was asked for.
+  if (parra_environment.active && !parra_environment.ok()) {
+    LOG(ERROR) << "parra: not creating target contents for url=" << url.spec()
+               << ": " << parra_environment.failure;
+    return nullptr;
+  }
+
+  // Parra: REFUSE the one creation path that cannot be isolated.
+  //
+  // For an empty-document URL (about:blank, about:srcdoc, data:) Chromium does not
+  // assign a site to the SiteInstance. An unassigned SiteInstance never registers
+  // with its BrowsingInstance, so the BrowsingInstance's StoragePartitionConfig
+  // stays unset -- and NavigationRequest then reads the partition from
+  // current_instance->GetSecurityPrincipal(), which for an unassigned instance is
+  // the DEFAULT partition. Measured consequence: a blank tab created for test-a
+  // commits its first HTTPS navigation in Personal.
+  //
+  // That is a real isolation hole, not a cosmetic one, so it is refused explicitly
+  // instead of being allowed to "work" until it silently lands in the wrong
+  // environment. Creating the same page through window.open()/target=_blank is
+  // unaffected: there the SiteInstance is the OPENER's, which has a site and
+  // therefore a real partition.
+  if (parra_environment.active &&
+      !parra_environment.partition.is_default() &&
+      !content::SiteInstance::ShouldAssignSiteForURL(url)) {
+    LOG(ERROR) << "parra: UNSUPPORTED creation path: url=" << url.spec()
+               << " is an empty-document URL, which Chromium never assigns a site "
+                  "to, so a StoragePartition cannot be pinned to it. Refusing "
+                  "instead of letting the first navigation land in '"
+               << parra::kDefaultEnvironmentId << "'. Requested environment was '"
+               << parra_environment.environment_id << "'.";
+    return nullptr;
+  }
+
   // Always create the new WebContents in a new SiteInstance (and therefore a
   // new BrowsingInstance), *unless* there's a |params.opener|.
   //
@@ -614,12 +663,16 @@ std::unique_ptr<content::WebContents> CreateTargetContents(
   // subsequent navigation is cross-process (i.e. cross-SiteInstance), then it
   // will stay in the same BrowsingInstance (creating frame proxies as needed)
   // preserving the requested opener relationship along the way.
+  //
+  // Parra: when there IS an opener, sharing the opener's SiteInstance is already
+  // correct -- the opener's BrowsingInstance is pinned to its partition, so the
+  // new page inherits it, and the script relationship (opener) is preserved.
+  // Only the no-opener path needs the partition passed in explicitly.
   scoped_refptr<content::SiteInstance> initial_site_instance_for_new_contents =
-      params.opener
-          ? params.opener->GetSiteInstance()
-          : tab_util::GetSiteInstanceForNewTab(
-                params.browser->GetProfile(), url,
-                GetInheritedPartitionConfig(params));
+      params.opener ? params.opener->GetSiteInstance()
+                    : tab_util::GetSiteInstanceForNewTab(
+                          params.browser->GetProfile(), url,
+                          parra_environment.partition);
 
   WebContents::CreateParams create_params(
       params.browser->GetProfile(), initial_site_instance_for_new_contents);
@@ -641,7 +694,33 @@ std::unique_ptr<content::WebContents> CreateTargetContents(
   }
 #endif
 
-  return WebContents::Create(create_params);
+  std::unique_ptr<content::WebContents> target_contents =
+      WebContents::Create(create_params);
+
+  // Parra: tag the page and VERIFY it landed in the partition the router chose.
+  // Doing this here -- before the tab is inserted into the strip -- means no
+  // observer can ever see an untagged tab that belongs to a non-default
+  // environment, which would make it briefly visible in the wrong tab strip and be
+  // counted in the wrong environment.
+  //
+  // A false return means the WebContents ended up somewhere other than the
+  // resolved environment. The tab is then destroyed by returning null, so it is
+  // never navigated and never inserted: a page whose partition disagrees with its
+  // intended environment would read another environment's cookies.
+  if (!parra::EnvironmentTabRouter::TagNewContents(target_contents.get(),
+                                                   parra_environment)) {
+    LOG(ERROR) << "parra: discarding target contents for url=" << url.spec()
+               << " because its StoragePartition does not match the resolved "
+                  "environment '"
+               << parra_environment.environment_id << "'";
+    return nullptr;
+  }
+
+  parra::EnvironmentTabRouter::VerifyContentsMatchesPartition(
+      params.browser->GetProfile(), target_contents.get(),
+      "navigator-create-target");
+
+  return target_contents;
 }
 
 }  // namespace
@@ -1020,6 +1099,35 @@ base::WeakPtr<content::NavigationHandle> NavigateImpl(
 
   std::unique_ptr<tabs::TabModel> tab_to_insert;
   if (params->contents_to_insert) {
+    // Parra: this branch is window.open() / target=_blank / AddWebContents: the
+    // content layer already created the WebContents and, for an opener, its
+    // SiteInstance is the opener's, so the StoragePartition is already correct.
+    // The environment TAG still has to be written here, because content/ knows
+    // nothing about Parra environments and a tab reaching the strip untagged
+    // would be counted as Personal.
+    //
+    // Tagging must happen before the tab is inserted below, so no observer can
+    // see the untagged tab.
+    //
+    // A false return means the page content/ created landed in a different
+    // StoragePartition than the environment we resolved for it. That must not be
+    // papered over by writing a tag the page does not honour, and it must not be
+    // inserted: the page would then read another environment's cookies. Refusing
+    // here leaves the window unchanged.
+    if (!parra::EnvironmentTabRouter::TagNewContents(
+            params->contents_to_insert.get(),
+            ResolveNewTabEnvironment(*params))) {
+      LOG(ERROR) << "parra: refusing to insert contents_to_insert for url="
+                 << params->url.spec()
+                 << ": its StoragePartition does not match the resolved "
+                    "environment";
+      params->navigated_or_inserted_contents = nullptr;
+      return nullptr;
+    }
+    parra::EnvironmentTabRouter::VerifyContentsMatchesPartition(
+        params->browser->GetProfile(), params->contents_to_insert.get(),
+        "navigator-contents-to-insert");
+
     tab_to_insert =
         std::make_unique<tabs::TabModel>(std::move(params->contents_to_insert),
                                          params->browser->GetTabStripModel());
@@ -1037,9 +1145,18 @@ base::WeakPtr<content::NavigationHandle> NavigateImpl(
   if (!contents_to_navigate_or_insert) {
     DCHECK(!params->url.is_empty());
     if (params->disposition != WindowOpenDisposition::kCurrentTab) {
+      std::unique_ptr<content::WebContents> parra_target_contents =
+          CreateTargetContents(*params, params->url);
+      // Parra: CreateTargetContents() returns null when the route had to be
+      // refused (environment could not be honoured, or the WebContents landed in
+      // the wrong StoragePartition). Bail out before constructing a TabModel
+      // around a null WebContents, which would CHECK-crash.
+      if (!parra_target_contents) {
+        params->navigated_or_inserted_contents = nullptr;
+        return nullptr;
+      }
       tab_to_insert = std::make_unique<tabs::TabModel>(
-          CreateTargetContents(*params, params->url),
-          params->browser->GetTabStripModel());
+          std::move(parra_target_contents), params->browser->GetTabStripModel());
       if (params->source_contents &&
           ((params->tabstrip_add_types & AddTabTypes::ADD_INHERIT_OPENER) ||
            params->user_gesture)) {

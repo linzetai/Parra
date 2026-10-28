@@ -41,6 +41,19 @@ class EnvironmentTag {
   // kDefaultEnvironmentId for untagged or null contents, which is the correct
   // answer for a restored upstream tab.
   static std::string Get(const content::WebContents* contents);
+
+  // True when somebody explicitly wrote a tag. This exists because Get()
+  // deliberately conflates two very different situations:
+  //
+  //   * an upstream Chromium tab that was never meant to carry an environment
+  //     (a native default tab -- "Personal" is the right answer), and
+  //   * a tab created through a Parra path that forgot to bind its environment.
+  //
+  // The first is legitimate, the second is a bug that would silently drop a page
+  // into Personal while its StoragePartition says otherwise. Callers that need to
+  // tell them apart (see EnvironmentTabRouter) must ask this, not compare Get()
+  // against kDefaultEnvironmentId.
+  static bool HasTag(const content::WebContents* contents);
 };
 
 }  // namespace parra

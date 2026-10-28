@@ -12,6 +12,8 @@ source_set("parra") {
   sources = [
     "environment_registry.cc",
     "environment_registry.h",
+    "environment_tab_router.cc",
+    "environment_tab_router.h",
     "environment_tag.cc",
     "environment_tag.h",
     "parra_storage_partition_util.cc",

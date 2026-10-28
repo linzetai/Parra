@@ -62,4 +62,11 @@ std::string EnvironmentTag::Get(const content::WebContents* contents) {
   return data->environment_id();
 }
 
+// static
+bool EnvironmentTag::HasTag(const content::WebContents* contents) {
+  if (!contents)
+    return false;
+  return contents->GetUserData(EnvironmentUserData::kKey) != nullptr;
+}
+
 }  // namespace parra

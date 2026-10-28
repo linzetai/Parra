@@ -48,7 +48,8 @@ content::WebContents* AddAndReturnTabAt(
     bool foreground,
     std::optional<tab_groups::TabGroupId> group,
     bool pinned,
-    std::optional<NavigateParams::WindowAction> window_action) {
+    std::optional<NavigateParams::WindowAction> window_action,
+    const std::string& parra_environment_id) {
   const GURL resolved_url = url.is_empty() ? GetNewTabURL(browser) : url;
   NavigateParams params(browser, resolved_url, ui::PAGE_TRANSITION_TYPED);
   params.disposition = foreground ? WindowOpenDisposition::kNewForegroundTab
@@ -61,6 +62,17 @@ content::WebContents* AddAndReturnTabAt(
   if (pinned) {
     params.tabstrip_add_types |= AddTabTypes::ADD_PINNED;
   }
+
+  // Parra: passed through untouched. An empty string means "derive the
+  // environment from the source page", which is the normal rule and the only
+  // correct one for page-derived tabs. The caller that names an environment is
+  // chrome's own new-tab command, and only when the window's current environment
+  // has no tab that could act as the source.
+  //
+  // Deliberately a plain string rather than a Parra type: this header is part of
+  // //chrome/browser/ui and must not gain a dependency on the Parra tab-strip
+  // layer, which would create a GN cycle through //chrome/browser/ui/tabs.
+  params.parra_environment_id = parra_environment_id;
 
   params.web_app_navigation_data.emplace();
   params.web_app_navigation_data->SetNavigationCapturingForceOff(true);
@@ -81,7 +93,8 @@ void AddTabAt(BrowserWindowInterface* browser,
               bool pinned,
               std::optional<NavigateParams::WindowAction> window_action) {
   /*void*/ AddAndReturnTabAt(browser, url, idx, foreground, std::move(group),
-                             pinned, window_action);
+                             pinned, window_action,
+                             /*parra_environment_id=*/std::string());
 }
 
 content::WebContents* AddSelectedTabWithURL(BrowserWindowInterface* browser,

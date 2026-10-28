@@ -16,5 +16,11 @@ const char kParraPocVisibilityCycles[] = "parra-poc-visibility-cycles";
 const char kParraPocNoInitialTabs[] = "parra-poc-no-initial-tabs";
 const char kParraPocSelfTest[] = "parra-poc-selftest";
 const char kParraPocTabOpsSelfTest[] = "parra-poc-tabops-selftest";
+const char kParraPocP31SelfTest[] = "parra-poc-p31-selftest";
+const char kParraPocP32SelfTest[] = "parra-poc-p32-selftest";
+const char kParraPocP32Seed[] = "parra-poc-p32-seed";
+const char kParraPocP32Verify[] = "parra-poc-p32-verify";
+const char kParraPocP32Open[] = "parra-poc-p32-open";
+const char kParraPocP32SetEnabled[] = "parra-poc-p32-set-enabled";
 
 }  // namespace parra::switches

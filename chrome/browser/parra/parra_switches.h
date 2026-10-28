@@ -92,6 +92,64 @@ extern const char kParraPocSelfTest[];
 // 3x3 layout from --parra-poc-visibility.
 extern const char kParraPocTabOpsSelfTest[];
 
+// Phase 3 P3.1 safety self-test: verifies the fail-closed partition resolution and
+// the OTR partition invariant described in docs/parra/53 and 54.
+//
+//   --parra-poc-p31-selftest
+//
+// Read-only with respect to the tab strip: it asks the resolver questions and
+// inspects the answers. It DOES construct a throwaway OTR profile to prove that an
+// incognito environment partition is in-memory, so it must run alone. No tab is
+// created, destroyed, moved or navigated.
+//
+// Needs the 3x3 layout from --parra-poc-visibility so the resolver can be asked
+// about environments that really exist and about ones that do not.
+extern const char kParraPocP31SelfTest[];
+
+// Phase 3 P3.2 self-test: verifies the Profile-scoped EnvironmentStore -- the data
+// model, CRUD, persistence states, enable/disable semantics and the format rules
+// described in docs/parra/56.
+//
+//   --parra-poc-p32-selftest
+//
+// Creates and removes definitions in the profile's prefs, so it must run against a
+// throwaway profile and alone. It restores the ids it owns before exiting.
+extern const char kParraPocP32SelfTest[];
+
+// Auxiliary P3.2 modes used to prove persistence ACROSS PROCESSES.
+//
+//   --parra-poc-p32-seed="<id>#<host rules>"
+//     Creates (or updates) one definition, flushes it to disk, logs SEED-DONE and
+//     exits. A single-process test could only prove that the in-memory map still
+//     holds what was just written; a second process is what proves the bytes
+//     reached the disk.
+//
+//   --parra-poc-p32-verify="<id>,<id>,..."
+//     Reads the listed ids back, asserts each exists, logs the stored order, the
+//     store's address, VERIFY-DONE, and exits.
+//
+// Both need a throwaway profile and mutate it.
+extern const char kParraPocP32Seed[];
+extern const char kParraPocP32Verify[];
+
+// Opens one tab inside a stored environment and leaves the browser running:
+//
+//   --parra-poc-p32-open="<id>#<url>"
+//
+// Used by the network half of the isolation proof (docs/parra/57 §3): the page
+// must be served according to the STORED definition, not a command-line one.
+extern const char kParraPocP32Open[];
+
+// Sets the `enabled` flag of one stored environment and exits:
+//
+//   --parra-poc-p32-set-enabled="<id>#<0|1>"
+//
+// Needed because `enabled` is a per-Profile preference: proving that disabling in
+// profile A leaves profile B's identically-named environment working requires
+// two processes, each flipping its own profile, rather than one process holding
+// both Stores in memory (docs/parra/60 §4).
+extern const char kParraPocP32SetEnabled[];
+
 }  // namespace parra::switches
 
 #endif  // CHROME_BROWSER_PARRA_PARA_SWITCHES_H_

@@ -57,6 +57,8 @@
 #include "chrome/browser/performance_monitor/chrome_browser_main_extra_parts_performance_monitor.h"
 #include "chrome/browser/parra/parra_index_mapper_selftest.h"
 #include "chrome/browser/parra/parra_lifecycle_poc.h"
+#include "chrome/browser/parra/parra_p31_selftest.h"
+#include "chrome/browser/parra/parra_p32_selftest.h"
 #include "chrome/browser/parra/parra_startup.h"
 #include "chrome/browser/parra/parra_tab_ops_selftest.h"
 #include "chrome/browser/parra/parra_visibility_poc.h"
@@ -1763,6 +1765,21 @@ void ChromeBrowserMainParts::PostBrowserStart() {
   // checks. No-op unless --parra-poc-tabops-selftest was supplied. Scheduled on a
   // delay so the 3x3 layout has committed (the checks read real partitions).
   parra::MaybeRunTabOpsSelfTest();
+
+  // Parra Phase 3 P3.1: fail-closed partition resolution and the OTR partition
+  // invariant. No-op unless --parra-poc-p31-selftest was supplied. Delayed for the
+  // same reason as above; it also needs the registry populated to ask about
+  // environments that really exist.
+  parra::MaybeRunP31SelfTest();
+
+  // Parra Phase 3 P3.2: the Profile-scoped EnvironmentStore. No-op unless
+  // --parra-poc-p32-selftest was supplied. Delayed so the profile's services are
+  // fully built before the store is exercised.
+  parra::MaybeRunP32SelfTest();
+
+  // Parra Phase 3 P3.2: open one tab in a STORED environment and stay open. No-op
+  // unless --parra-poc-p32-open was supplied. Used by the network isolation proof.
+  parra::MaybeRunP32Open();
 
   browser_process_->browser_policy_connector()->OnBrowserStarted();
 

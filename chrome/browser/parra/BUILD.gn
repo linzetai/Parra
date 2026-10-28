@@ -10,8 +10,16 @@
 
 source_set("parra") {
   sources = [
+    "environment.cc",
+    "environment.h",
     "environment_registry.cc",
     "environment_registry.h",
+    "environment_serialization.cc",
+    "environment_serialization.h",
+    "environment_store.cc",
+    "environment_store.h",
+    "environment_store_factory.cc",
+    "environment_store_factory.h",
     "environment_tab_router.cc",
     "environment_tab_router.h",
     "environment_tag.cc",
@@ -25,11 +33,19 @@ source_set("parra") {
   # Deliberately free of //chrome/browser/ui dependencies so that lower layers
   # (//chrome/browser/net, //chrome/browser/ui/navigator) can depend on it
   # without creating a GN cycle with //chrome/browser:core.
+  #
+  # //chrome/browser/profiles:profile already carries profile.h AND
+  # profile_keyed_service_factory.h (see chrome/browser/profiles/BUILD.gn:418-433),
+  # so the factory needs no new target and introduces no new edge.
   deps = [
     "//base",
+    "//chrome/common:constants",
     "//chrome/browser/profiles:profile",
+    "//components/keyed_service/core",
+    "//components/prefs",
     "//content/public/browser",
     "//crypto",
+    "//net",
   ]
 }
 

@@ -389,6 +389,7 @@
 #include "chrome/browser/password_manager/factories/bulk_leak_check_service_factory.h"
 #include "chrome/browser/password_manager/remote_actor/remote_actor_credential_sharing_service_factory.h"
 #include "chrome/browser/payments/payment_request_display_manager_factory.h"
+#include "chrome/browser/parra/environment_store_factory.h"
 #include "chrome/browser/picture_in_picture/hats/auto_picture_in_picture_hats_service_factory.h"
 #include "chrome/browser/prefs/persistent_renderer_prefs_manager_factory.h"
 #include "chrome/browser/profile_resetter/reset_report_uploader_factory.h"
@@ -1242,6 +1243,11 @@ void ChromeBrowserMainExtraPartsProfiles::
 #if !BUILDFLAG(IS_ANDROID)
   PageColorsControllerFactory::GetInstance();
 #endif
+  // Parra: one environment store per profile. Registered here (rather than being
+  // created on first use) because the store must already hold its definitions when
+  // the profile's first StoragePartition asks for host mapping rules -- that call
+  // is synchronous and cannot wait for a service. See EnvironmentStoreFactory.
+  parra::EnvironmentStoreFactory::GetInstance();
   passage_embeddings::PassageEmbedderModelObserverFactory::GetInstance();
 #if !BUILDFLAG(IS_ANDROID)
   webauthn::PasskeyUnlockManagerFactory::GetInstance();

@@ -3337,6 +3337,34 @@ inline constexpr char kCpuPerformanceTierOverride[] =
 // Value indicating that the CPU performance tier has not been overridden.
 inline constexpr int kCpuPerformanceTierOverrideNone = -1;
 
+// Parra: the profile's environment definitions, as a JSON blob.
+//
+// Stored as a STRING rather than a dictionary on purpose:
+//   * a dictionary forces prefs' type validation on every field, which makes it
+//     impossible to preserve fields written by a newer build;
+//   * int64 timestamps (unix millis) survive a string round trip unchanged,
+//     whereas prefs' integer semantics on some platforms do not;
+//   * one key = one atomic write, so a partial update cannot be observed.
+//
+// NOT registered as syncable and NOT in any policy allowlist: this is local
+// configuration, and syncing it would let one machine's definitions silently
+// replace another's partitions.
+inline constexpr char kParraEnvironments[] = "parra.environments";
+
+// Parra: host-mapping rules for the reserved `personal` environment.
+//
+// Separate from kParraEnvironments because `personal` is IMPLICIT: it is never a
+// stored Environment record (its id is reserved and it maps to the default
+// StoragePartition), yet it still needs host rules of its own.
+//
+// This key exists because of a real defect: the one-time command-line import
+// skipped `personal` (correctly, since the reader rejects a record with a reserved
+// id), which silently dropped Personal's rules and left every Personal page
+// resolving against real DNS. Keeping the rules in their own key lets the
+// definition list stay purely user-defined while Personal keeps its routing.
+inline constexpr char kParraPersonalHostMappings[] =
+    "parra.personal_host_mappings";
+
 }  // namespace prefs
 
 #endif  // CHROME_COMMON_PREF_NAMES_H_

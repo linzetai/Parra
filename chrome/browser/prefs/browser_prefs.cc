@@ -2039,6 +2039,14 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
   ChromeVersionService::RegisterProfilePrefs(registry);
   chrome_browser_net::NetErrorTabHelper::RegisterProfilePrefs(registry);
   chrome_prefs::RegisterProfilePrefs(registry);
+  // Parra: the profile's environment definitions. A string, not a dictionary:
+  // see chrome/common/pref_names.h. Deliberately NOT syncable -- syncing would
+  // let one machine's definitions silently replace another's partitions.
+  registry->RegisterStringPref(prefs::kParraEnvironments, std::string());
+  // Parra: host-mapping rules for the implicit `personal` environment. Kept in
+  // its own key because `personal` is never a stored definition record.
+  registry->RegisterStringPref(prefs::kParraPersonalHostMappings,
+                               std::string());
   collaboration::prefs::RegisterProfilePrefs(registry);
   commerce::RegisterProfilePrefs(registry);
   context_hub::prefs::RegisterProfilePrefs(registry);

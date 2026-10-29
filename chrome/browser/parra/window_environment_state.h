@@ -115,6 +115,14 @@ class WindowEnvironmentState {
   // way to go from a model back to its window.
   static WindowEnvironmentState* GetForModel(TabStripModel* model);
 
+  // Live instance count, for the lifetime tests (docs/parra/64, 67).
+  //
+  // A leaked state has no visible symptom, so the only way to assert "closing a
+  // window releases its state" is to expose the count. Test-only in spirit; not
+  // used by any product path.
+  static int live_instance_count();
+  static int total_created_count();
+
   explicit WindowEnvironmentState(BrowserWindowInterface* window);
  public:
   // Public so std::unique_ptr can delete it; construction stays through

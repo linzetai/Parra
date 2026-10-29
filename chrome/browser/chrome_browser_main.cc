@@ -1781,6 +1781,26 @@ void ChromeBrowserMainParts::PostBrowserStart() {
   // unless --parra-poc-p32-open was supplied. Used by the network isolation proof.
   parra::MaybeRunP32Open();
 
+  // Parra Phase 3 P3.3: open a real SECOND window parked on a named environment.
+  // No-op unless --parra-poc-open-window was supplied. Used to prove per-window
+  // environment state survives a restart (docs/parra/65).
+  parra::MaybeRunP32OpenWindow();
+
+  // Parra Phase 3 P3.3: window lifetime stress. No-op unless
+  // --parra-poc-window-stress was supplied. Asserts that closing a window releases
+  // its WindowEnvironmentState (docs/parra/64).
+  parra::MaybeRunP32WindowStress();
+
+  // Parra Phase 3 P3.3 T1: cross-window tab move, then restart. No-op unless
+  // --parra-poc-tab-move was supplied. Closes the gap in docs/parra/76 §A1 Q2/Q3,
+  // which had source analysis but no runtime evidence.
+  parra::MaybeRunTabMove();
+
+  // Parra Phase 3 P3.3 T2: tab inserted untagged, tagged afterwards. No-op unless
+  // --parra-poc-late-tag was supplied. Covers docs/parra/76 §A1 Q5, the one case
+  // where a correct build still writes a bare id=0 for a Parra tab.
+  parra::MaybeRunLateTag();
+
   browser_process_->browser_policy_connector()->OnBrowserStarted();
 
 #if BUILDFLAG(ENABLE_PROCESS_SINGLETON)

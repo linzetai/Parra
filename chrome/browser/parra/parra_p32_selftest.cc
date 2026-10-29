@@ -24,15 +24,25 @@
 #include "chrome/browser/parra/environment_tag.h"
 #include "chrome/browser/parra/parra_storage_partition_util.h"
 #include "chrome/browser/parra/parra_switches.h"
+#include "chrome/browser/parra/window_environment_state.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/navigator/browser_navigator.h"
 #include "chrome/browser/ui/navigator/browser_navigator_params.h"
+#include "chrome/browser/ui/tabs/tab_enums.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
+#include "components/sessions/content/session_tab_helper.h"
+#include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/security_principal.h"
+#include "content/public/browser/site_instance.h"
+#include "content/public/browser/web_contents.h"
 #include "ui/base/base_window.h"
 #include "url/gurl.h"
+#include "url/url_constants.h"
 
 namespace parra {
 
@@ -769,6 +779,24 @@ void OpenInStoredEnvironment() {
                                  resolved.config))
                       << "'";
 
+            // Make the window's ACTIVE environment match the environment the tab
+            // is being opened in.
+            //
+            // Without this the window stays on `personal` while hosting a test-a
+            // tab, and the session records `personal` as the window's active
+            // environment -- so a restart would reopen the window on Personal even
+            // though the user's intent (and the tab) is test-a. The two-window test
+            // in docs/parra/65 needs the window-level value to be meaningful.
+            if (WindowEnvironmentState* state =
+                    WindowEnvironmentState::GetFor(window)) {
+              state->SetActiveEnvironment(resolved.environment_id);
+              LOG(INFO) << "PARRA-P32-OPEN window active env set to '"
+                        << resolved.environment_id << "'";
+            } else {
+              LOG(ERROR) << "PARRA-P32-OPEN window has no environment state; the"
+                            " window will stay on its current environment";
+            }
+
             NavigateParams params(window, GURL(url),
                                   ui::PAGE_TRANSITION_TYPED);
             params.disposition = WindowOpenDisposition::kNewForegroundTab;
@@ -777,6 +805,15 @@ void OpenInStoredEnvironment() {
             // whatever tab happens to be active.
             params.parra_environment_id = id;
             Navigate(&params);
+
+            // A second tab in the same environment, so the window holds more than
+            // one page of it -- the shape docs/parra/65 asserts on ("two test-a
+            // pages in window A"). Both must land in the same partition and be
+            // recorded separately.
+            NavigateParams second(window, GURL(url), ui::PAGE_TRANSITION_TYPED);
+            second.disposition = WindowOpenDisposition::kNewForegroundTab;
+            second.parra_environment_id = id;
+            Navigate(&second);
           },
           browser, profile, id, url),
       base::Seconds(2));
@@ -786,6 +823,242 @@ void OpenInStoredEnvironment() {
 
 void MaybeRunP32Open() {
   OpenInStoredEnvironment();
+}
+
+namespace {
+
+// Multi-window mode: opens a REAL second browser window and parks it on the named
+// environment.
+//
+// Why a dedicated switch instead of reusing --new-window: --new-window against a
+// running instance is forwarded to that instance and does not reliably produce a
+// second SESSION window, so a test built on it cannot observe two windows. This
+// calls chrome::NewWindow(), the Ctrl+N entry point, and then addresses the new
+// window by identity rather than by "whatever was last active".
+//
+// The scenario this enables (docs/parra/65): window A on test-a, window B on
+// test-b, both persisted, both restored to their own environment.
+void OpenSecondWindowInEnvironment() {
+  const base::CommandLine* command_line =
+      base::CommandLine::ForCurrentProcess();
+  if (!command_line->HasSwitch(switches::kParraPocOpenWindow))
+    return;
+
+  const std::string spec =
+      command_line->GetSwitchValueASCII(switches::kParraPocOpenWindow);
+  const size_t separator = spec.find('#');
+  const std::string id =
+      separator == std::string::npos ? spec : spec.substr(0, separator);
+  const std::string url =
+      separator == std::string::npos ? std::string() : spec.substr(separator + 1);
+
+  BrowserWindowInterface* first =
+      GetLastActiveBrowserWindowInterfaceWithAnyProfile();
+  if (!first || !first->GetProfile()) {
+    LOG(ERROR) << "PARRA-WIN no browser window/profile";
+    return;
+  }
+  Profile* profile = first->GetProfile();
+
+  // Delayed so the first window's layout (and its environment state) already
+  // exists; otherwise "the new window did not disturb the old one" would be
+  // asserting against a window that had not finished being built.
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(
+          [](Profile* profile, std::string id, std::string url) {
+            EnvironmentStore* store = EnvironmentStore::GetForProfile(profile);
+            if (!store) {
+              LOG(ERROR) << "PARRA-WIN no store";
+              return;
+            }
+            const ResolvedEnvironmentLookup resolved =
+                store->ResolveForEnvironment(id);
+            if (!resolved.ok()) {
+              // Same fail-closed rule as everywhere else: an id that this profile
+              // does not define must not be silently turned into a Personal
+              // window, because the test would then "pass" against the wrong
+              // environment.
+              LogEnvironmentGuardRefusal("open_window", id, resolved.failure);
+              return;
+            }
+
+            BrowserWindowInterface* before =
+                GetLastActiveBrowserWindowInterfaceWithAnyProfile();
+            const int states_before =
+                WindowEnvironmentState::live_instance_count();
+
+            // The real thing: same call the Ctrl+N accelerator makes.
+            chrome::NewWindow(before);
+
+            BrowserWindowInterface* opened =
+                GetLastActiveBrowserWindowInterfaceWithAnyProfile();
+            if (!opened || opened == before) {
+              LOG(ERROR) << "PARRA-WIN new window did not become active; "
+                            "cannot address it";
+              return;
+            }
+
+            LOG(INFO) << "PARRA-WIN opened window: states_before="
+                      << states_before << " states_after="
+                      << WindowEnvironmentState::live_instance_count()
+                      << " (an increase of exactly 1 is expected)";
+
+            if (WindowEnvironmentState* state =
+                    WindowEnvironmentState::GetFor(opened)) {
+              state->SetActiveEnvironment(resolved.environment_id);
+              LOG(INFO) << "PARRA-WIN new window env='"
+                        << resolved.environment_id
+                        << "' partition=" << resolved.config;
+            } else {
+              LOG(ERROR) << "PARRA-WIN new window has NO environment state";
+            }
+
+            NavigateParams params(opened, GURL(url), ui::PAGE_TRANSITION_TYPED);
+            params.disposition = WindowOpenDisposition::kNewForegroundTab;
+            params.parra_environment_id = resolved.environment_id;
+            Navigate(&params);
+
+            // Second tab in the new window's own environment, mirroring the first
+            // window. Two windows with two tabs each is the shape docs/parra/65
+            // requires, and it also proves the two windows do not share a single
+            // "current environment".
+            NavigateParams second(opened, GURL(url),
+                                  ui::PAGE_TRANSITION_TYPED);
+            second.disposition = WindowOpenDisposition::kNewForegroundTab;
+            second.parra_environment_id = resolved.environment_id;
+            Navigate(&second);
+          },
+          profile, id, url),
+      base::Seconds(4));
+}
+
+}  // namespace
+
+void MaybeRunP32OpenWindow() {
+  OpenSecondWindowInEnvironment();
+}
+
+namespace {
+
+// Window lifetime stress: open a window, verify the state count rose by one, close
+// it, verify the count came back down. Repeat N times.
+//
+// WHY: a leaked WindowEnvironmentState is invisible until something dereferences its
+// raw `window_` pointer after the window is gone. Asserting the live count after
+// every cycle turns that latent bug into a failure at the exact cycle it appears.
+//
+// Each cycle is driven from a TIMER rather than from a for-loop. Window destruction
+// is asynchronous -- Browser::GetWindow()->Close() posts the teardown to this same
+// sequence -- so a loop that closes and immediately opens the next window measures
+// the count BEFORE the previous window was destroyed. A first version did exactly
+// that and reported a monotonically rising count, which reads as a leak but is
+// really "N windows open at once because none had been torn down yet".
+//
+// One cycle per task makes the measurement meaningful: by the time the next task
+// runs, the previous close has been processed.
+class WindowStressRunner {
+ public:
+  static void Start(int cycles) {
+    // Intentionally leaked: the runner must outlive the timer callbacks, and this
+    // only ever runs in a throwaway test process.
+    (new WindowStressRunner(cycles))->ScheduleNext();
+  }
+
+ private:
+  explicit WindowStressRunner(int cycles)
+      : cycles_(cycles), remaining_(cycles) {}
+
+  void ScheduleNext() {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(&WindowStressRunner::OnTick,
+                       base::Unretained(this)),
+        base::Seconds(1));
+  }
+
+  void OnTick() {
+    const int base = WindowEnvironmentState::live_instance_count();
+
+    if (remaining_ <= 0) {
+      LOG(INFO) << "PARRA-STRESS done: cycles=" << cycles_ << " failures="
+                << failures_ << " live_now=" << base
+                << " (expected 1: only the initial window)";
+      return;
+    }
+
+    BrowserWindowInterface* current =
+        GetLastActiveBrowserWindowInterfaceWithAnyProfile();
+    if (!current) {
+      LOG(ERROR) << "PARRA-STRESS no window to open from; aborting";
+      ++failures_;
+      return;
+    }
+
+    if (pending_close_) {
+      // Previous cycle's window should be gone by now.
+      if (base > baseline_) {
+        LOG(ERROR) << "PARRA-STRESS LEAK at cycle " << (cycles_ - remaining_ - 1)
+                   << ": live=" << base << " baseline=" << baseline_
+                   << " (the closed window's state was not released)";
+        ++failures_;
+      }
+      pending_close_ = false;
+    } else {
+      baseline_ = base;
+    }
+
+    chrome::NewWindow(current);
+    BrowserWindowInterface* opened =
+        GetLastActiveBrowserWindowInterfaceWithAnyProfile();
+    if (!opened || opened == current) {
+      LOG(ERROR) << "PARRA-STRESS cycle " << (cycles_ - remaining_)
+                 << ": new window did not become active";
+      ++failures_;
+      ScheduleNext();
+      return;
+    }
+
+    const int after_open = WindowEnvironmentState::live_instance_count();
+    const bool has_state = WindowEnvironmentState::GetFor(opened) != nullptr;
+    if (after_open != base + 1 || !has_state) {
+      LOG(ERROR) << "PARRA-STRESS cycle " << (cycles_ - remaining_)
+                 << ": expected live=" << (base + 1) << " got " << after_open
+                 << " has_state=" << (has_state ? 1 : 0);
+      ++failures_;
+    } else {
+      LOG(INFO) << "PARRA-STRESS cycle " << (cycles_ - remaining_)
+                << ": open ok live=" << after_open << " baseline=" << base;
+    }
+
+    opened->GetWindow()->Close();
+    pending_close_ = true;
+    --remaining_;
+    ScheduleNext();
+  }
+
+  const int cycles_;
+  int remaining_;
+  int baseline_ = 1;
+  int failures_ = 0;
+  bool pending_close_ = false;
+};
+
+}  // namespace
+
+void MaybeRunP32WindowStress() {
+  const base::CommandLine* command_line =
+      base::CommandLine::ForCurrentProcess();
+  if (!command_line->HasSwitch(switches::kParraPocWindowStress))
+    return;
+
+  int cycles = 20;
+  base::StringToInt(
+      command_line->GetSwitchValueASCII(switches::kParraPocWindowStress),
+      &cycles);
+  if (cycles <= 0)
+    return;
+  WindowStressRunner::Start(cycles);
 }
 
 void MaybeRunP32SelfTest() {
@@ -875,6 +1148,306 @@ void MaybeRunP32SelfTest() {
           },
           browser->GetProfile()),
       base::Seconds(5));
+}
+
+// ===========================================================================
+// P3.3 T1: cross-window tab move, then restart.
+//
+// docs/parra/76 §A1 Q2/Q3 could only be answered from source before this. The
+// question is an ORDERING question, and ordering bugs are invisible to reading:
+// the file legitimately contains TWO records for the moved tab (one per window),
+// and which one wins depends on which observer ran last.
+//
+// Why it has to be two processes: the claim under test is "after a restart the
+// tab is back in the target window". Reading it back in the SAME process would
+// only prove the in-memory SessionTabHelper still has the new id, not that the
+// record reached disk in that order.
+//
+// The move is performed with the same two calls a drag ends up making
+// (DetachWebContentsAtForInsertion + AddWebContents), deliberately not a
+// higher-level helper: a helper could hide which observer callbacks fire, and
+// those callbacks are exactly what is under test.
+// ===========================================================================
+
+namespace {
+
+// Reads the environment the page's STORAGE actually lives in, from its committed
+// SiteInstance partition. This is deliberately not EnvironmentTag::Get(): the
+// point of T1 is to prove the MOVE did not change where the data lives, and the
+// tag is a claim while the partition is ground truth.
+//
+// Returns an empty string for a page with no site assigned yet (about:blank),
+// which is reported as such rather than misread as "Personal".
+std::string ActualPartitionEnvironmentOf(content::WebContents* contents) {
+  content::RenderFrameHost* main_frame = contents->GetPrimaryMainFrame();
+  if (!main_frame)
+    return std::string();
+  const scoped_refptr<content::SiteInstance> site_instance =
+      main_frame->GetSiteInstance();
+  if (!site_instance)
+    return std::string();
+  return GetEnvironmentIdFromPartitionConfig(
+      site_instance->GetSecurityPrincipal().GetStoragePartitionConfig());
+}
+
+void MoveReport(bool ok, const std::string& test, const std::string& detail) {
+  LOG(INFO) << "PARRA-MOVE " << (ok ? "PASS" : "FAIL") << " " << test << " | "
+            << detail;
+}
+
+void RunTabMoveScenario(Profile* profile) {
+  BrowserWindowInterface* first =
+      GetLastActiveBrowserWindowInterfaceWithAnyProfile();
+  if (!first) {
+    MoveReport(false, "setup-window", "no browser window");
+    return;
+  }
+
+  // The visibility PoC leaves window 1 on Personal when --parra-poc-visibility-
+  // cycles=0 (it returns before reaching --parra-poc-final-environment). Park the
+  // FIRST window explicitly here instead of relying on that switch, because a move
+  // from Personal to test-b would pass while proving nothing about moving a tab
+  // between two REAL environments.
+  const std::string first_env =
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+          switches::kParraPocTabMove);
+  const std::string from_env = "test-a";
+  WindowEnvironmentState* first_state = WindowEnvironmentState::GetFor(first);
+  if (!first_state) {
+    MoveReport(false, "setup-first-env", "window 1 has no environment state");
+    return;
+  }
+  first_state->SetActiveEnvironment(from_env);
+  MoveReport(first_state->active_environment() == from_env, "setup-first-env",
+             "env='" + first_state->active_environment() + "'");
+
+  // The target environment comes from the switch so the script controls it; the
+  // test must not silently pick one and then "pass" against the wrong window.
+  const std::string target_env = first_env;
+  if (target_env.empty() || target_env == from_env) {
+    MoveReport(false, "setup-target-env",
+               "need a target environment different from '" + from_env + "'");
+    return;
+  }
+
+  chrome::NewWindow(first);
+  BrowserWindowInterface* second =
+      GetLastActiveBrowserWindowInterfaceWithAnyProfile();
+  if (!second || second == first) {
+    MoveReport(false, "setup-second-window", "new window did not become active");
+    return;
+  }
+  if (WindowEnvironmentState* state = WindowEnvironmentState::GetFor(second)) {
+    state->SetActiveEnvironment(target_env);
+  }
+  MoveReport(true, "setup-second-window", "env='" + target_env + "'");
+
+  // Create the tab to move in the FIRST window.
+  NavigateParams params(first, GURL("https://sheet.test:8443/"),
+                        ui::PAGE_TRANSITION_TYPED);
+  params.disposition = WindowOpenDisposition::kNewForegroundTab;
+  params.parra_environment_id = from_env;
+  Navigate(&params);
+
+  TabStripModel* first_model = first->GetTabStripModel();
+  const int source_index = first_model->count() - 1;
+  content::WebContents* moved = first_model->GetWebContentsAt(source_index);
+  if (!moved) {
+    MoveReport(false, "setup-tab", "no tab to move");
+    return;
+  }
+
+  const std::string tag_before = EnvironmentTag::Get(moved);
+  const bool had_tag = EnvironmentTag::HasTag(moved);
+  sessions::SessionTabHelper* helper =
+      sessions::SessionTabHelper::FromWebContents(moved);
+  const SessionID window_before = helper->window_id();
+  const SessionID tab_id = helper->session_id();
+  const auto config_before = ActualPartitionEnvironmentOf(moved);
+  MoveReport(had_tag && tag_before == from_env, "pre-move-state",
+             "tag='" + tag_before + "' from_window=" +
+                 base::NumberToString(window_before.id()) +
+                 " tab=" + base::NumberToString(tab_id.id()) +
+                 " partition='" + config_before + "'");
+
+  // The move itself.
+  std::unique_ptr<content::WebContents> detached =
+      first_model->DetachWebContentsAtForInsertion(source_index);
+  if (!detached) {
+    MoveReport(false, "detach", "DetachWebContentsAtForInsertion returned null");
+    return;
+  }
+  second->GetTabStripModel()->AddWebContents(
+      std::move(detached), TabStripModel::kNoTab,
+      ui::PAGE_TRANSITION_AUTO_TOPLEVEL, AddTabTypes::ADD_ACTIVE);
+
+  // The WebContents object survives the move, so the tag must be unchanged. A
+  // changed environment here would mean the move recreated the WebContents, which
+  // would silently orphan its partition.
+  const std::string tag_after = EnvironmentTag::Get(moved);
+  MoveReport(tag_after == tag_before, "post-move-tag",
+             "before='" + tag_before + "' after='" + tag_after + "'");
+
+  const SessionID window_after =
+      sessions::SessionTabHelper::FromWebContents(moved)->window_id();
+  const SessionID target_window_id = second->GetSessionID();
+  MoveReport(window_after == target_window_id, "post-move-window",
+             "after=" + base::NumberToString(window_after.id()) +
+                 " target=" + base::NumberToString(target_window_id.id()) +
+                 " before=" + base::NumberToString(window_before.id()));
+
+  const auto config_after = ActualPartitionEnvironmentOf(moved);
+  MoveReport(config_after == config_before, "post-move-partition",
+             "before='" + config_before + "' after='" + config_after + "'");
+
+  // Machine-checkable summary the outer script greps after the restart.
+  LOG(INFO) << "PARRA-MOVE SUMMARY tab=" << tab_id.id()
+            << " env='" << tag_after << "'"
+            << " from_window=" << window_before.id()
+            << " to_window=" << window_after.id()
+            << " partition='" << config_after << "'";
+}
+
+}  // namespace
+
+void MaybeRunTabMove() {
+  const base::CommandLine* command_line =
+      base::CommandLine::ForCurrentProcess();
+  if (!command_line->HasSwitch(switches::kParraPocTabMove))
+    return;
+  BrowserWindowInterface* browser =
+      GetLastActiveBrowserWindowInterfaceWithAnyProfile();
+  if (!browser || !browser->GetProfile()) {
+    LOG(ERROR) << "PARRA-MOVE no browser window/profile";
+    return;
+  }
+  // Delayed for the same reason as every other Parra self-test: the visibility
+  // PoC builds the layout during startup, and window 1's environment is not
+  // settled until it has run.
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(&RunTabMoveScenario, browser->GetProfile()),
+      base::Seconds(8));
+}
+
+// ===========================================================================
+// P3.3 T2: a tab that is inserted WITHOUT a tag, and tagged afterwards.
+//
+// docs/parra/76 §A1 Q5. This is the one case where a CORRECT build still writes a
+// bare id=0 for a Parra tab:
+//   * TabInserted() runs while HasTag() is false -> id=0 (structure only)
+//   * EnvironmentTag::Set() later -> observer -> RecordTabEnvironment()
+//                                 -> AddTabExtraData() -> id=38 (structure + env)
+// Two records, one tab. The claim is that replay's last-write-wins yields the
+// id=38 environment and not Personal.
+//
+// Why the tab is created WITHOUT passing parra_environment_id: passing it would
+// tag the page on the navigation path, which is exactly the case T1 already
+// covers. The point here is the ordering where the tag arrives late.
+// ===========================================================================
+
+namespace {
+
+void LateTagReport(bool ok, const std::string& test,
+                   const std::string& detail) {
+  LOG(INFO) << "PARRA-LATETAG " << (ok ? "PASS" : "FAIL") << " " << test
+            << " | " << detail;
+}
+
+void RunLateTagScenario(Profile* profile) {
+  BrowserWindowInterface* browser =
+      GetLastActiveBrowserWindowInterfaceWithAnyProfile();
+  if (!browser) {
+    LateTagReport(false, "setup-window", "no browser window");
+    return;
+  }
+  const std::string env =
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+          switches::kParraPocLateTag);
+  if (env.empty()) {
+    LateTagReport(false, "setup-env", "no environment id");
+    return;
+  }
+
+  // The tab must be born WITHOUT a tag, and Navigate() cannot produce that here.
+  //
+  // WHY NOT Navigate(): browser_navigator.cc:193-196 fills `source_contents` from
+  // the ACTIVE tab when the caller leaves it null, and the active tab of a window
+  // parked on an environment IS tagged. ResolveForNewTab() then takes the
+  // kInheritedFromTag branch and tags the new page -- which is why earlier versions
+  // of this test always reported "pre-tag tagged=true", even for about:blank.
+  //
+  // So the WebContents is created directly and inserted, bypassing the router
+  // entirely. That is the real-world shape of this case anyway: a WebContents that
+  // existed before anything decided its environment (restored, adopted, injected).
+  content::WebContents::CreateParams create_params(profile);
+  create_params.initially_hidden = false;
+  std::unique_ptr<content::WebContents> fresh =
+      content::WebContents::Create(create_params);
+  TabStripModel* model = browser->GetTabStripModel();
+  model->AddWebContents(std::move(fresh), TabStripModel::kNoTab,
+                        ui::PAGE_TRANSITION_TYPED, AddTabTypes::ADD_ACTIVE);
+
+  content::WebContents* contents = model->GetWebContentsAt(model->count() - 1);
+  if (!contents) {
+    LateTagReport(false, "setup-tab", "no tab created");
+    return;
+  }
+
+  const bool had_tag = EnvironmentTag::HasTag(contents);
+  const SessionID tab_id =
+      sessions::SessionTabHelper::FromWebContents(contents)->session_id();
+  // At this instant the tab has been inserted already, so TabInserted() has run
+  // and written id=0. Asserting "no tag yet" is what makes this scenario the
+  // late-tag case rather than an ordinary tagged insert.
+  LateTagReport(!had_tag, "pre-tag",
+                "tagged=" + std::string(had_tag ? "true" : "false") +
+                    " tab=" + base::NumberToString(tab_id.id()));
+
+  // Now announce ownership. This must reach disk as an id=38 record through the
+  // tag observer, not as a loose extra_data command.
+  EnvironmentTag::Set(contents, env);
+  LateTagReport(EnvironmentTag::Get(contents) == env, "post-tag",
+                "tag='" + EnvironmentTag::Get(contents) + "'");
+
+  // about:blank leaves NO navigation entry, and SessionWindow replay drops tabs
+  // whose `navigations` list is empty (AddTabsToWindows, session_service_commands.cc:
+  // 481). Without a real navigation the tab would be pruned on restart and the case
+  // could not be verified at all.
+  //
+  // The navigation happens AFTER the tag is set on purpose: it is what makes this
+  // "tag assigned late, then used", not "tag assigned at creation".
+  //
+  // Navigating the ACTIVE tab in place: the new tab was opened foreground, so the
+  // active index is the one we just created. Using the browser constructor (there is
+  // no WebContents* overload) plus kCurrentTab keeps it in that tab.
+  NavigateParams load(browser, GURL("https://sheet.test:8443/"),
+                      ui::PAGE_TRANSITION_TYPED);
+  load.disposition = WindowOpenDisposition::kCurrentTab;
+  load.parra_environment_id = env;
+  Navigate(&load);
+
+  LOG(INFO) << "PARRA-LATETAG SUMMARY tab=" << tab_id.id() << " env='" << env
+            << "' (the session file must contain BOTH id=0 and id=38 for this "
+               "tab)";
+}
+
+}  // namespace
+
+void MaybeRunLateTag() {
+  const base::CommandLine* command_line =
+      base::CommandLine::ForCurrentProcess();
+  if (!command_line->HasSwitch(switches::kParraPocLateTag))
+    return;
+  BrowserWindowInterface* browser =
+      GetLastActiveBrowserWindowInterfaceWithAnyProfile();
+  if (!browser || !browser->GetProfile()) {
+    LOG(ERROR) << "PARRA-LATETAG no browser window/profile";
+    return;
+  }
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE, base::BindOnce(&RunLateTagScenario, browser->GetProfile()),
+      base::Seconds(8));
 }
 
 }  // namespace parra

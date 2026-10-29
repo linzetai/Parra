@@ -17,9 +17,11 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/parra/environment_index_mapper.h"
+#include "chrome/browser/parra/environment_session_persistence.h"
 #include "chrome/browser/parra/environment_visibility_controller.h"
 #include "chrome/browser/parra/parra_storage_partition_util.h"
 #include "chrome/browser/parra/parra_switches.h"
+#include "chrome/browser/parra/window_environment_state.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_service.h"
 #include "chrome/browser/sessions/session_service_factory.h"
@@ -329,6 +331,20 @@ void VisibilityPocRunner::Run() {
   // any request leaves the process.
   WriteEnvironmentExtraData(profile, browser, model);
 
+  // P3.3: also record the window's active environment at startup.
+  //
+  // The per-tab write above happens on every tab insertion (see browser.cc), but
+  // the WINDOW's active environment only changes on an explicit switch. Recording
+  // it here means a window that never switches still has a recorded value, instead
+  // of restoring to Personal just because nothing was ever written. Without this,
+  // "the user never left test-a" is indistinguishable from "nothing was recorded"
+  // and the window would reopen on Personal.
+  if (WindowEnvironmentState* window_state =
+          WindowEnvironmentState::GetFor(browser)) {
+    EnvironmentSessionPersistence::RecordWindowActiveEnvironment(
+        profile, browser, window_state->active_environment());
+  }
+
   const int cycles = [] {
     int value = 5;
     base::StringToInt(
@@ -373,6 +389,26 @@ void VisibilityPocRunner::OnTick() {
   if (remaining_switches_ <= 0) {
     LOG(INFO) << "parra-vis: cycles complete, total switches="
               << controller_->switch_count();
+
+    // Leave the window on a caller-chosen environment, if one was named.
+    //
+    // The cycle above always ends on the FIRST environment (the cursor wraps
+    // through the list), so every run would otherwise finish on `personal`. That
+    // makes the window-active-environment restore check vacuous, because restoring
+    // `personal` is indistinguishable from restoring nothing at all. This lets a
+    // test park the window on a non-default environment before quitting.
+    const std::string final_environment =
+        base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+            switches::kParraPocFinalEnvironment);
+    if (!final_environment.empty()) {
+      if (controller_->SwitchTo(final_environment)) {
+        LOG(INFO) << "parra-vis: left window on '" << final_environment
+                  << "' for the restart check";
+      } else {
+        LOG(ERROR) << "parra-vis: could not switch to '" << final_environment
+                   << "' for the restart check";
+      }
+    }
 
     // Final authoritative identity dump. By now every tab has committed at
     // least one document, so `actual=` is populated for all of them. This is

@@ -42,6 +42,38 @@ void MaybeRunP32SelfTest();
 // SWITCH works rather than that the STORED definition works.
 void MaybeRunP32Open();
 
+// Opens a REAL second browser window and parks it on the named environment, then
+// navigates it to the given URL:
+//
+//   --parra-poc-open-window="<id>#<url>"
+//
+// Uses chrome::NewWindow() -- the Ctrl+N entry point -- because --new-window
+// against a running instance is forwarded to that process and does not reliably
+// yield a second session window. The resulting window is a genuine Browser with
+// its own TabStripModel, BrowserView and WindowEnvironmentState.
+//
+// Enables the multi-window restore proof in docs/parra/65: two windows on two
+// different environments, both persisted, both restored independently.
+void MaybeRunP32OpenWindow();
+
+// Window lifetime stress: opens and closes N windows, asserting the live
+// WindowEnvironmentState count returns to its baseline each cycle.
+//
+//   --parra-poc-window-stress=<count>
+//
+// Catches leaked window state, which is otherwise invisible until its raw window
+// pointer is used after the window is gone. See docs/parra/64.
+void MaybeRunP32WindowStress();
+
+// P3.3 T1: move a tab to a second window and leave both open, so an outer script
+// can close the browser and verify that a restart puts the tab back in the TARGET
+// window with its original environment. No-op unless --parra-poc-tab-move=<env>.
+void MaybeRunTabMove();
+
+// P3.3 T2: create a tab that is untagged at insertion time, then tag it, and leave
+// the browser open. No-op unless --parra-poc-late-tag=<env>.
+void MaybeRunLateTag();
+
 }  // namespace parra
 
 #endif  // CHROME_BROWSER_PARRA_PARRA_P32_SELFTEST_H_

@@ -6,6 +6,7 @@
 
 #include "base/check.h"
 #include "base/logging.h"
+#include "chrome/browser/parra/environment_session_persistence.h"
 #include "chrome/browser/parra/parra_storage_partition_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
@@ -61,15 +62,21 @@ bool EnvironmentVisibilityController::SwitchTo(
     }
   }
 
-  // Refuse to switch to an environment with no tabs. Doing so would leave the
-  // strip showing a foreign tab, which is a state the rest of the code cannot
-  // reason about.
-  if (mapper_.GetVisibleCount(environment_id) == 0) {
-    LOG(WARNING) << "parra-vis: environment '" << environment_id
-                 << "' has no tabs; switch ignored (still on '"
-                 << mapper_.active_environment() << "')";
-    return false;
-  }
+  // Switching to an environment with NO tabs is allowed, and lands the window in an
+  // empty tab strip owned by that environment.
+  //
+  // This used to be refused, on the grounds that "the strip would show a foreign
+  // tab". That reasoning was wrong: the alternative to an empty strip is not
+  // "show something sensible", it is "silently refuse and leave the user on the
+  // environment they were trying to leave". A user who has configured an
+  // environment and closed its last tab must still be able to select it, otherwise
+  // the only way to ever put a tab in it is to already have one there.
+  //
+  // The state is coherent: the active environment is an environment that exists,
+  // and it simply has no tabs. The first tab created while it is active is created
+  // in ITS partition (EnvironmentTabRouter resolves from the active environment),
+  // so the empty state resolves itself as soon as the user opens anything.
+  const int visible_count = mapper_.GetVisibleCount(environment_id);
 
   if (environment_id == mapper_.active_environment()) {
     LOG(INFO) << "parra-vis: already on '" << environment_id << "'; no-op";
@@ -84,6 +91,19 @@ bool EnvironmentVisibilityController::SwitchTo(
   // Step 2: change which environment is active. Note this does NOT move any
   // tab: the model is untouched.
   mapper_.SetActiveEnvironment(environment_id);
+
+  // Nothing to activate when the target has no tabs; the strip is now legitimately
+  // empty and the next tab created will belong to this environment.
+  if (visible_count == 0) {
+    ++switch_count_;
+    LOG(INFO) << "parra-vis: switch #" << switch_count_ << " '" << previous
+              << "' -> '" << environment_id
+              << "' (environment has no tabs; strip is now empty)";
+    NotifyEnvironmentChanged();
+    RecordWindowActiveEnvironment();
+    VerifyInvariants("after-switch");
+    return true;
+  }
 
   // Step 3: activate the target environment's remembered tab.
   //
@@ -117,9 +137,35 @@ bool EnvironmentVisibilityController::SwitchTo(
   // EnvironmentFilterObserver::OnActiveEnvironmentChanged().
   NotifyEnvironmentChanged();
 
+  // Step 5: record the window's active environment so a restart can put the user
+  // back where they were.
+  //
+  // This is recorded SEPARATELY from any tab's ownership, under its own key, and
+  // that separation is deliberate: the active environment is a VIEW preference
+  // which is allowed to fall back to `personal` on restore, while a tab's
+  // partition must never be changed by such a fallback. Two concerns, two keys;
+  // one key would let a fallback silently look like a re-ownership.
+  RecordWindowActiveEnvironment();
+
   LogSnapshot("after-switch");
   VerifyInvariants("after-switch");
   return true;
+}
+
+void EnvironmentVisibilityController::RecordWindowActiveEnvironment() const {
+  if (!model_)
+    return;
+
+  TabStripModelDelegate* delegate = model_->delegate();
+  if (!delegate)
+    return;
+
+  BrowserWindowInterface* window = delegate->GetBrowserWindowInterface();
+  if (!window)
+    return;
+
+  EnvironmentSessionPersistence::RecordWindowActiveEnvironment(
+      window->GetProfile(), window, mapper_.active_environment());
 }
 
 void EnvironmentVisibilityController::VerifyInvariants(const char* when) const {

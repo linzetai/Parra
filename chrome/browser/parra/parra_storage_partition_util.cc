@@ -116,7 +116,24 @@ PartitionResolution ResolvePartitionForEnvironment(
       case StoreLookupKind::kDisabled:
         // Defined but switched off. Kept distinct from kUnknown so a caller can
         // report "this environment is disabled" instead of "it does not exist".
+        //
+        // The CONFIG is still filled in, even though ok() is false. Two callers
+        // need it:
+        //
+        //   * session restore restores a disabled environment's tabs rather than
+        //     destroying them (its data is intact; only activation is blocked), and
+        //     it needs the real partition to do that;
+        //   * leaving it default while reporting kDisabled made
+        //     ResolveEnvironmentForRestore() derive an empty config, which
+        //     SiteInstance::CreateForFixedStoragePartition() rejects with
+        //     `Check failed: !partition_config.is_default()` -- i.e. a disabled
+        //     environment crashed the browser on startup instead of restoring.
+        //
+        // ok() stays false: being disabled still means "not selectable", and a
+        // caller that only checks ok() will refuse, which is the safe default.
         result.lookup = EnvironmentLookup::kDisabled;
+        result.environment_id = resolved.environment_id;
+        result.config = resolved.config;
         result.failure = resolved.failure;
         return result;
       case StoreLookupKind::kUnknown:

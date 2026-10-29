@@ -12,6 +12,15 @@
 
 namespace parra {
 
+// The on-disk sessions::SessionTab::extra_data key. Declared in the header so
+// //chrome/browser/sessions can reuse it on the rebuild path without depending on
+// the UI layer (see the header comment).
+const char kEnvironmentSessionExtraDataKey[] = "parra.environment_id";
+
+// Marks the tab as Parra-owned even when the environment id itself is unreadable.
+// See the header for the four cases this disambiguates.
+const char kEnvironmentSessionOwnerKey[] = "parra.owner";
+
 namespace {
 
 // The user-data payload holding the environment id.
@@ -39,7 +48,19 @@ class EnvironmentUserData : public base::SupportsUserData::Data {
 
 constexpr char EnvironmentUserData::kKey[];
 
+// The installed observer, if any. Function-local static rather than a global so the
+// initialisation order cannot bite during startup.
+EnvironmentTag::Observer& TagObserver() {
+  static base::NoDestructor<EnvironmentTag::Observer> observer;
+  return *observer;
+}
+
 }  // namespace
+
+// static
+void EnvironmentTag::SetObserver(Observer observer) {
+  TagObserver() = std::move(observer);
+}
 
 // static
 void EnvironmentTag::Set(content::WebContents* contents,
@@ -48,6 +69,12 @@ void EnvironmentTag::Set(content::WebContents* contents,
   CHECK(!environment_id.empty());
   contents->SetUserData(EnvironmentUserData::kKey,
                         std::make_unique<EnvironmentUserData>(environment_id));
+
+  // Announce immediately: this is the earliest moment the tab's ownership is
+  // known, and doing it here means the record does not depend on winning a race
+  // against a session-command rebuild.
+  if (TagObserver() && !TagObserver().is_null())
+    TagObserver().Run(contents, environment_id);
 }
 
 // static

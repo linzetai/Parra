@@ -381,8 +381,15 @@ ResolvedEnvironmentLookup EnvironmentStore::ResolveForEnvironment(
     // Refused for SELECTION only. The partition and its data are intact, which
     // is why this is a distinct kind rather than kUnknown: a caller can tell
     // "the environment was switched off" from "the environment is gone".
+    //
+    // The partition config IS filled in. `enabled` is selection state and must not
+    // affect where the data lives, so a caller that legitimately needs the storage
+    // location (session restore reviving that environment's tabs instead of
+    // destroying them) must still be able to ask for it. Callers that only consult
+    // kind/ok() see the refusal as before.
     result.kind = StoreLookupKind::kDisabled;
     result.environment_id = environment->id;
+    result.config = GetStoragePartitionConfig(environment->id);
     result.failure = "environment '" + environment->id + "' is disabled";
     return result;
   }

@@ -19,6 +19,29 @@ namespace parra {
 
 DEFINE_USER_DATA(WindowEnvironmentState);
 
+namespace {
+
+// Live instance count, used by the lifetime tests in docs/parra/64 and 67.
+//
+// This exists because "no leak" cannot be observed from the outside: a leaked
+// WindowEnvironmentState has no user-visible symptom, so a regression would only
+// surface later as a use-after-free of its raw `window_` pointer. Counting
+// constructions and destructions makes the property directly assertable --
+// create and close windows N times, and the live count must return to its
+// starting value.
+int g_live_states = 0;
+int g_total_created = 0;
+
+}  // namespace
+
+int WindowEnvironmentState::live_instance_count() {
+  return g_live_states;
+}
+
+int WindowEnvironmentState::total_created_count() {
+  return g_total_created;
+}
+
 // static
 WindowEnvironmentState* WindowEnvironmentState::GetFor(
     BrowserWindowInterface* window) {
@@ -58,9 +81,17 @@ WindowEnvironmentState::WindowEnvironmentState(BrowserWindowInterface* window)
     : window_(window),
       scoped_data_holder_(window->GetUnownedUserDataHost(), *this) {
   CHECK(window_);
+  ++g_live_states;
+  ++g_total_created;
+  LOG(INFO) << "parra-state: constructed live=" << g_live_states
+            << " total=" << g_total_created;
 }
 
-WindowEnvironmentState::~WindowEnvironmentState() = default;
+WindowEnvironmentState::~WindowEnvironmentState() {
+  --g_live_states;
+  LOG(INFO) << "parra-state: destroyed live=" << g_live_states
+            << " total_created=" << g_total_created;
+}
 
 TabStripModel* WindowEnvironmentState::GetModel() const {
   if (!window_)

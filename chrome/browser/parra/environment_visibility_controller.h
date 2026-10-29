@@ -102,6 +102,11 @@ class EnvironmentVisibilityController {
   void VerifyInvariants(const char* when) const;
 
  private:
+  // Records this window's active environment into the session file so a restart
+  // can restore it. Best-effort and silent on failure (a missing SessionService
+  // must not break switching).
+  void RecordWindowActiveEnvironment() const;
+
   void LogSnapshot(const char* reason) const;
 
   // Tells the tab strip to re-apply the environment filter.

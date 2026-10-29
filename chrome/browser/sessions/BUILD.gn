@@ -86,6 +86,11 @@ source_set("impl") {
     "//chrome/browser:buildflags",
     "//chrome/browser/glic",
     "//chrome/browser/lifetime",
+    # Parra: SessionService::BuildCommandsForTab() re-emits the tab's environment
+    # ownership when it rebuilds the command list, so a rebuild cannot drop it.
+    # Depends on the LOW parra target only; :parra_tabs would be a cycle (that
+    # target already depends on :sessions).
+    "//chrome/browser/parra:parra",
   ]
 
   if (enable_extensions_core) {

@@ -195,7 +195,25 @@ void BrowserTabStripController::InitFromModel(TabStrip* tabstrip) {
   //
   // CreateFor() returns null if a state already exists for this window, so a
   // second controller cannot silently overwrite the first one's state.
-  if (parra::IsParraPocEnabled() && !parra_window_state_) {
+  //
+  // CREATED UNCONDITIONALLY, including for a plain Chromium window that has no
+  // environments configured. The condition used to be IsParraPocEnabled(), which
+  // conflated two different questions:
+  //
+  //   "is Parra active in this process?"  (a configuration question),  and
+  //   "does this window have a view state?"  (a structural question).
+  //
+  // Tying the second to the first meant a window had NO state whenever Parra was
+  // not configured -- so nothing could record its active environment, and Session
+  // Restore found nothing to restore. It also forced callers to work around the
+  // absence by creating a second state object elsewhere (see
+  // docs/parra/64 section 2.1), which broke single-ownership.
+  //
+  // The cost is one std::string, one small vector and one host registration. The
+  // behaviour for a Parra-less window is unchanged in every observable way: the
+  // active environment stays kDefaultEnvironmentId, and SetActiveEnvironment()
+  // reports "no change" for it, so nothing gets written to the session file.
+  if (!parra_window_state_) {
     parra_window_state_ =
         parra::WindowEnvironmentState::CreateFor(browser_view_->browser());
     if (!parra_window_state_) {

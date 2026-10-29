@@ -42,6 +42,8 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/buildflags.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
+#include "chrome/browser/parra/environment_session_persistence.h"
+#include "chrome/browser/parra/window_environment_state.h"
 #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/profiles/profile.h"
@@ -941,6 +943,19 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
             window->user_title);
       }
 
+      // Parra: restore this window's active environment.
+      //
+      // Done for BOTH the newly created window and the reused one. The reused case
+      // is the common "continue where you left off" path, where no new window is
+      // created at all, so restoring only in CreateRestoredBrowser() would silently
+      // do nothing.
+      //
+      // This restores the WINDOW's SELECTION only. It never touches a tab's
+      // environment: a window may fall back to Personal when its recorded
+      // environment is gone, while the tabs that survived keep their own
+      // partitions and data.
+      RestoreWindowActiveEnvironment(browser, window->extra_data);
+
       // 3. Track TYPE_APP browsers.
       if (window->type == sessions::SessionWindow::TYPE_APP) {
         last_app_browser = browser;
@@ -1437,8 +1452,63 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
       manager->SetWindowCreationInfo(
           waap::NewWindowCreationSource::kSessionRestore, now);
     }
+
     g_is_any_session_restored = true;
     return browser_window;
+  }
+
+  // Parra: restore a window's active environment from its recorded extra_data.
+  //
+  // Called from the CALLER of CreateRestoredBrowser (not from inside it) because a
+  // session can restore into an EXISTING browser instead of creating one --
+  // ShouldRestoreToExistingBrowser() returns true for the first normal window in
+  // the common "continue where you left off" case. Putting this inside
+  // CreateRestoredBrowser() covered only the new-window path and silently did
+  // nothing in the far more common existing-window path.
+  static void RestoreWindowActiveEnvironment(
+      BrowserWindowInterface* window,
+      const std::map<std::string, std::string>& window_extra_data) {
+    if (!window)
+      return;
+
+    const std::string recorded =
+        parra::EnvironmentSessionPersistence::
+            GetRecordedActiveEnvironmentFromExtraData(window_extra_data);
+    if (recorded.empty())
+      return;
+
+    // LOOKUP ONLY. This window's state was created by
+    // BrowserTabStripController::InitFromModel() while the BrowserView was being
+    // constructed, which happens inside Browser::Init() -- i.e. strictly before any
+    // session restore runs. So it normally exists here.
+    //
+    // Not created here on purpose: this function has no destruction hook, so an
+    // object created here would have to be parked in some process-wide container,
+    // outliving the window it points at (its `window_` is a raw_ptr). That was the
+    // P3.3 version and it leaked one object per restored window; see docs/parra/64.
+    parra::WindowEnvironmentState* state =
+        parra::WindowEnvironmentState::GetFor(window);
+    if (!state) {
+      // Only reachable if a window was built through a path that does not create a
+      // BrowserView (or Parra was compiled out of that path). Reporting the loss is
+      // right; inventing a state object is not.
+      //
+      // Note what is NOT affected: no tab's environment is touched by this. Every
+      // tab was already bound to its own partition by browser_tabrestore.cc before
+      // this ran, so a missing window-level state costs the window's SELECTION only.
+      LOG(ERROR) << "parra-restore: no window environment state; the recorded"
+                 << " active environment '" << recorded
+                 << "' is not restored. No tab's environment is affected.";
+      return;
+    }
+
+    if (state->SetActiveEnvironment(recorded)) {
+      LOG(INFO) << "parra-restore: window active environment restored to '"
+                << recorded << "'";
+    } else {
+      LOG(INFO) << "parra-restore: window was already on '" << recorded
+                << "'; no change needed";
+    }
   }
 
   void ShowBrowser(BrowserWindowInterface* browser, int selected_tab_index) {

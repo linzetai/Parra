@@ -56,8 +56,14 @@ namespace {
 // Parra: locate the environment recorded for a restored tab.
 //
 // Session restore writes `parra.environment_id` into SessionTab::extra_data
-// (see ParraVisibility); it therefore arrives here through `extra_data`.
+// (see EnvironmentSessionPersistence); it therefore arrives here through
+// `extra_data`.
 constexpr char kParraEnvironmentExtraDataKey[] = "parra.environment_id";
+
+// Marker written alongside the id whenever Parra decided an environment for the tab
+// (including `personal`). It is what makes "no id" unambiguous -- see
+// chrome/browser/parra/environment_tag.h for the four cases.
+constexpr char kParraEnvironmentOwnerKey[] = "parra.owner";
 
 std::string_view ParraEnvironmentIdFromExtraData(
     const std::map<std::string, std::string>& extra_data) {
@@ -65,6 +71,10 @@ std::string_view ParraEnvironmentIdFromExtraData(
   if (it == extra_data.end())
     return std::string_view();
   return it->second;
+}
+
+bool ParraOwnedPerExtraData(const std::map<std::string, std::string>& extra_data) {
+  return extra_data.find(kParraEnvironmentOwnerKey) != extra_data.end();
 }
 
 // Parra: decide the initial SiteInstance for a restored tab so that the very
@@ -87,15 +97,39 @@ bool ParraCreateParamsForRestoredTab(
   const std::string_view environment_id =
       ParraEnvironmentIdFromExtraData(extra_data);
 
-  // Fast path: no Parra involvement at all (the common upstream case).
+  // Four cases, deliberately not collapsed into one:
   //
-  // An EMPTY id means the tab never recorded an environment -- not that one went
-  // missing -- so it is safe to leave it on the upstream path even if Parra is
-  // configured. A non-empty id always goes through the fail-closed resolver below,
-  // even when Parra appears disabled, because the tab demonstrably belonged to an
-  // environment whose partition still exists on disk.
-  if (environment_id.empty())
-    return true;
+  //   (a) not Parra-owned, no id  -> a plain Chromium history tab. Restore on the
+  //       upstream path. This is the common case for real users and MUST keep
+  //       working; refusing all untagged tabs would destroy ordinary sessions.
+  //
+  //   (b) Parra-owned, NO id      -> this tab demonstrably belonged to an
+  //       environment, but the id record is unreadable. Its partition is unknown,
+  //       and restoring it into Personal would put the page where its cookies and
+  //       host mapping are not -- the exact leak this project exists to prevent.
+  //       Refused.
+  //
+  //   (c) id == `personal`        -> known Personal; restore upstream.
+  //
+  //   (d) id is a real environment -> resolved below; deleted => refuse,
+  //       disabled => restore but not activatable.
+  //
+  // Before the owner marker existed, (a) and (b) were indistinguishable, so the code
+  // had to choose between a silent isolation loss and breaking ordinary sessions. It
+  // chose the former, with a comment claiming an empty id "means the tab never
+  // recorded an environment" -- which was only true because the writer had no way to
+  // say otherwise.
+  if (environment_id.empty()) {
+    if (ParraOwnedPerExtraData(extra_data)) {
+      parra::LogEnvironmentGuardRefusal(
+          "restore", "<missing>",
+          "this tab is marked as Parra-owned but its environment id is missing, so "
+          "its StoragePartition cannot be determined; refusing to restore it into "
+          "the default partition");
+      return false;
+    }
+    return true;  // (a) plain Chromium tab.
+  }
 
   const parra::ResolvedEnvironment resolved = parra::ResolveEnvironmentForRestore(
       browser->GetProfile(), environment_id);

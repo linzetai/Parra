@@ -30,6 +30,8 @@
 #include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profiles_state.h"
+#include "chrome/browser/parra/environment_tag.h"
+#include "chrome/browser/parra/parra_storage_partition_util.h"
 #include "chrome/browser/sessions/exit_type_service.h"
 #include "chrome/browser/sessions/session_common_utils.h"
 #include "chrome/browser/sessions/session_data_deleter.h"
@@ -367,6 +369,35 @@ void SessionService::AddTabExtraData(SessionID window_id,
                                      const char* key,
                                      const std::string& data) {
   if (!ShouldTrackChangesToWindow(window_id)) {
+    // Parra: this SILENT drop is what made the "extra_data never persisted" defect
+    // hard to diagnose. Whether a write landed depended on whether this window had
+    // been registered with the session service yet, and nothing recorded that the
+    // attempt had been refused. Kept as a permanent ERROR (not a VLOG) because a
+    // dropped environment record is a silent isolation loss.
+    LOG_IF(ERROR, std::string_view(key) == parra::kEnvironmentSessionExtraDataKey)
+        << "parra-session: environment record DROPPED (window not tracked)"
+        << " window_id=" << window_id.id() << " tab_id=" << tab_id.id();
+    return;
+  }
+
+  // Parra: the environment id must not travel as its own record.
+  //
+  // Writing it via CreateAddTabExtraDataCommand would put the environment in a
+  // SECOND, independently length-prefixed record, separate from the tab's
+  // structure. That is precisely the split this phase removes: the structure
+  // record can reach disk while this one has not, and a crash in that window
+  // leaves a tab whose environment is unreadable.
+  //
+  // Routing the environment through the composite command (same window_id, same
+  // tab_id, one payload) makes every incremental recording atomic, no matter
+  // which caller produced it -- EnvironmentSessionPersistence::RecordTabEnvironment
+  // and the EnvironmentTag observer both land here.
+  //
+  // The structure half is idempotent: CreateTabsAndWindows() calls GetTab(), which
+  // creates the SessionTab on demand, and assigning window_id twice is harmless.
+  if (std::string_view(key) == parra::kEnvironmentSessionExtraDataKey) {
+    ScheduleCommand(sessions::CreateSetTabWindowWithEnvironmentCommand(
+        window_id, tab_id, key, data));
     return;
   }
 
@@ -681,6 +712,26 @@ void SessionService::BuildCommandsForTab(
     command_storage_manager()->AppendRebuildCommand(
         sessions::CreateSplitTabCommand(session_id, std::move(split)));
   }
+
+  // Parra: the environment ownership is emitted by
+  // SessionServiceBase::BuildCommandsForTab() as part of the same
+  // kCommandSetTabWindowWithEnvironment record that carries this tab's window
+  // membership. It is deliberately NOT re-emitted here any more.
+  //
+  // History of this spot: an earlier version appended two extra
+  // CreateAddTabExtraDataCommand records (environment + owner marker) from this
+  // function, because the base implementation only emitted CreateSetTabWindowCommand
+  // and a rebuild (ScheduleResetCommands -> ClearPendingCommands) therefore dropped
+  // ownership that had not yet been flushed. That fixed the rebuild loss, but left
+  // the rebuild writing THREE records for one tab, which reintroduced exactly the
+  // "structure present, ownership absent" window that this phase removes: a crash
+  // between the structure record and the extra_data records produced a tab whose
+  // environment was unreadable.
+  //
+  // Emitting both facts in one command at the single place where the tab's
+  // structure is produced is the only form that cannot be split by a crash, and it
+  // keeps the incremental path, the rebuild path and the restore reader on one
+  // definition. See session_service_commands.h.
 }
 
 void SessionService::ScheduleResetCommands() {

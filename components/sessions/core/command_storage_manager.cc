@@ -365,9 +365,19 @@ void CommandStorageManager::StartSaveTimer() {
 void CommandStorageManager::Save() {
   weak_factory_for_timer_.InvalidateWeakPtrs();
 
+  const size_t before = pending_commands_.size();
+  const bool reset = pending_reset_;
+
   // Inform the delegate that we will save the commands now, giving it the
   // opportunity to append more commands.
   delegate_->OnWillSaveCommands();
+
+  // Parra diagnostic, VLOG so it is silent by default but available when the
+  // "environment records queued but never written" symptom reappears. It distinguishes
+  // the three ways a save can do nothing: the queue was empty before the delegate
+  // ran, the delegate emptied it (a rebuild replaced it), or the write happened.
+  VLOG(1) << "parra-session: save pending_before=" << before
+          << " pending_after=" << pending_commands_.size() << " reset=" << reset;
 
   if (pending_commands_.empty()) {
     return;

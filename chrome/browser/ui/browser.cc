@@ -53,6 +53,8 @@
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/picture_in_picture/picture_in_picture_window_manager.h"
 #include "chrome/browser/policy/developer_tools_policy_handler.h"
+#include "chrome/browser/parra/environment_session_persistence.h"
+#include "chrome/browser/parra/window_environment_state.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/printing/background_printing_manager.h"
 #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
@@ -575,6 +577,82 @@ void Browser::OnTabStripModelChanged(TabStripModel* tab_strip_model,
       }
       for (const auto& contents : change.GetInsert()->contents) {
         OnTabInsertedAt(contents.contents, contents.index);
+
+        // Parra: persist this tab's environment ownership into the session file.
+        //
+        // Placed HERE, after OnTabInsertedAt(), because that is the first moment
+        // both identities exist: the WebContents has a SessionTabHelper id (created
+        // in its constructor) and this window is tracked by the SessionService
+        // (SetWindowType() runs before any tab is inserted). Calling it earlier --
+        // e.g. next to EnvironmentTag::Set() during navigation, before the tab is
+        // in the strip -- would fail silently: AddTabExtraData() drops the command
+        // when ShouldTrackChangesToWindow() is false, or writes nothing at all when
+        // the tab has no session id yet.
+        //
+        // The alternative was to save on shutdown only. That would lose the
+        // environment of every tab if the browser is killed, and the whole point of
+        // recording ownership is that a crash-restored tab still lands in the right
+        // partition. Writing per insertion makes the record as durable as the tab's
+        // existence.
+        //
+        // This does not maintain a second tab list: the session service already owns
+        // the list of tabs; this only attaches one extra_data key to the tab it
+        // already knows about.
+        parra::EnvironmentSessionPersistence::RecordTabEnvironment(
+            profile_, this, contents.contents);
+      }
+
+      // Parra: install the ownership hook once, as soon as a browser exists.
+      //
+      // Done here (rather than at startup) because this is the earliest point where
+      // the persistence layer can reach a Profile, and the hook must be in place
+      // before the next tab's environment is decided. The static flag makes repeated
+      // tabs cheap; SetObserver's last-one-wins contract makes a re-install harmless.
+      //
+      // WHY THE HOOK EXISTS AT ALL: this same function already records ownership, but
+      // that record lives in SessionService's PENDING command queue, and
+      // ScheduleResetCommands() calls ClearPendingCommands() -- so a queued record can
+      // be discarded before it ever reaches disk, with no rebuild able to recover it
+      // (at rebuild time the tab may still be an untagged about:blank). Observed as
+      // two "queued" records followed by two pending_reset=1 saves that no longer
+      // contained them.
+      static bool parra_tag_observer_installed = false;
+      if (!parra_tag_observer_installed) {
+        parra_tag_observer_installed = true;
+        parra::EnvironmentSessionPersistence::InstallTagObserver();
+      }
+      // Parra: record THIS window's active environment too.
+      //
+      // Done here rather than only on an explicit switch because a window can acquire
+      // tabs without ever switching: a second window opened with --new-window, a
+      // window restored from a session, or a window whose only tab was just created.
+      // Without this, such a window has no recorded active environment at all, and a
+      // restart cannot tell "this window was on test-a" from "nothing was recorded",
+      // so it would reopen on Personal.
+      //
+      // Per WINDOW, not per process: each window keeps its own value, which is what
+      // makes two windows on different environments restore correctly.
+      //
+      // LOOKUP ONLY -- never create here. Ownership of this window's state is
+      // BrowserTabStripController::parra_window_state_ (a unique_ptr member), which
+      // creates it during InitFromModel() while the window is being constructed. That
+      // happens before any tab is inserted, so by the time this runs the state
+      // normally exists.
+      //
+      // An earlier version created it here into a process-wide
+      // base::NoDestructor<vector<unique_ptr<...>>>, which leaked the object for the
+      // rest of the process after the window closed and left its raw `window_`
+      // pointer dangling. Creating a second owner here would also break the
+      // "exactly one WindowEnvironmentState per window" invariant.
+      //
+      // When the state is missing we record NOTHING rather than inventing `personal`:
+      // no state means this window never decided on an environment, and writing a
+      // value would dress a non-decision up as a decision. (Same rule as
+      // RecordTabEnvironment() refusing to write `personal` for an untagged tab.)
+      if (parra::WindowEnvironmentState* parra_state =
+              parra::WindowEnvironmentState::GetFor(this)) {
+        parra::EnvironmentSessionPersistence::RecordWindowActiveEnvironment(
+            profile_, this, parra_state->active_environment());
       }
       break;
     }

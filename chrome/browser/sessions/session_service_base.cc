@@ -21,6 +21,8 @@
 #include "build/build_config.h"
 #include "chrome/browser/apps/app_service/web_contents_app_id_utils.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/parra/environment_tag.h"
+#include "chrome/browser/parra/parra_storage_partition_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_service_base_observer.h"
 #include "chrome/browser/sessions/session_service_log.h"
@@ -279,8 +281,51 @@ void SessionServiceBase::TabInserted(WebContents* contents) {
   if (!ShouldTrackChangesToWindow(session_tab_helper->window_id())) {
     return;
   }
-  SetTabWindow(session_tab_helper->window_id(),
-               session_tab_helper->session_id());
+
+  // Parra: emit the tab's window membership AND its environment ownership as a
+  // SINGLE command when Parra has decided an environment for this tab.
+  //
+  // WHY THIS IS NOT "just calling AddTabExtraData earlier"
+  // ------------------------------------------------------
+  // Two separate ScheduleCommand() calls produce two separate length-prefixed
+  // records, appended by (possibly) two different saves. A crash in between
+  // leaves the tab's structure recoverable while nothing records which
+  // environment it belonged to. On restore such a tab is indistinguishable from
+  // a stock Chromium tab and gets restored into Personal -- a silent
+  // cross-environment restore.
+  //
+  // Collapsing both facts into one SessionCommand removes that intermediate
+  // state entirely: SessionCommand is serialized behind one length prefix and
+  // the reader either gets the whole record or reports an invalid/incomplete
+  // command. See CreateSetTabWindowWithEnvironmentCommand().
+  //
+  // Only taken when the tab actually carries an EnvironmentTag. An untagged tab
+  // is a stock Chromium tab: it falls through to the upstream SetTabWindow()
+  // below and writes NO environment record at all, which is what keeps ordinary
+  // history tabs restoring normally.
+  if (parra::IsEnabled()) {
+    const std::string parra_environment = parra::EnvironmentTag::Get(contents);
+    if (parra::EnvironmentTag::HasTag(contents) && !parra_environment.empty()) {
+      ScheduleCommand(sessions::CreateSetTabWindowWithEnvironmentCommand(
+          session_tab_helper->window_id(), session_tab_helper->session_id(),
+          parra::kEnvironmentSessionExtraDataKey, parra_environment));
+      // Ownership is announced by the same record, so the independent owner
+      // marker is no longer required for this tab. It is still written by
+      // EnvironmentSessionPersistence::RecordTabEnvironment() for recordings
+      // that happen through the tag-observer path; a second identical value
+      // under the same key is an update, not a duplicate.
+      LOG(INFO) << "parra-session: atomic tab+environment record tab_id="
+                << session_tab_helper->session_id() << " env='"
+                << parra_environment << "'";
+    } else {
+      SetTabWindow(session_tab_helper->window_id(),
+                   session_tab_helper->session_id());
+    }
+  } else {
+    SetTabWindow(session_tab_helper->window_id(),
+                 session_tab_helper->session_id());
+  }
+
   std::string app_id = apps::GetAppIdForWebContents(contents);
   if (!app_id.empty()) {
     SetTabExtensionAppID(session_tab_helper->window_id(),
@@ -616,8 +661,33 @@ void SessionServiceBase::BuildCommandsForTab(
   sessions::SessionTabHelper* session_tab_helper =
       sessions::SessionTabHelper::FromWebContents(tab);
   const SessionID session_id(session_tab_helper->session_id());
-  command_storage_manager()->AppendRebuildCommand(
-      sessions::CreateSetTabWindowCommand(window_id, session_id));
+
+  // Parra: emit the tab's structure and its environment ownership as ONE command
+  // whenever Parra decided an environment for this tab, so the REBUILD path
+  // produces byte-for-byte the same ownership semantics as the incremental
+  // TabInserted() path. Using the shared helper here (rather than a separate
+  // copy of the "is this tab tagged" test) is what keeps the two paths from
+  // drifting: there is exactly one definition of "does this tab have an
+  // environment, and which one".
+  //
+  // The previous form appended CreateSetTabWindowCommand here and re-emitted the
+  // environment as two ADDITIONAL CreateAddTabExtraDataCommand calls from
+  // SessionService::BuildCommandsForTab(). That kept ownership across a rebuild,
+  // but as three separate records -- so a rebuild still wrote a window in which
+  // the structure existed without the environment.
+  std::string parra_environment;
+  if (parra::IsEnabled() && parra::EnvironmentTag::HasTag(tab)) {
+    parra_environment = parra::EnvironmentTag::Get(tab);
+  }
+  if (!parra_environment.empty()) {
+    command_storage_manager()->AppendRebuildCommand(
+        sessions::CreateSetTabWindowWithEnvironmentCommand(
+            window_id, session_id, parra::kEnvironmentSessionExtraDataKey,
+            parra_environment));
+  } else {
+    command_storage_manager()->AppendRebuildCommand(
+        sessions::CreateSetTabWindowCommand(window_id, session_id));
+  }
 
   const int current_index = tab->GetController().GetCurrentEntryIndex();
   const int min_index =

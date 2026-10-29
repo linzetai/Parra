@@ -31,6 +31,26 @@ CreateSetSelectedTabInWindowCommand(SessionID window_id, int index);
 SESSIONS_EXPORT std::unique_ptr<SessionCommand> CreateSetTabWindowCommand(
     SessionID window_id,
     SessionID tab_id);
+
+// Parra: window membership AND one extra_data pair in a SINGLE command.
+//
+// The pair (window_id, tab_id) is the same structure information
+// CreateSetTabWindowCommand writes; `environment_key`/`environment_id` is the
+// extra_data entry CreateAddTabExtraDataCommand would write as a SEPARATE
+// record. Combining them is what makes the tab's structure and its environment
+// ownership atomic: one SessionCommand is serialized with one length prefix and
+// appended in one write, and the reader either deserializes the whole command or
+// rejects it as an incomplete last record. There is no on-disk state in which
+// the structure parses but the environment is absent.
+//
+// This does NOT replace the older two-record form for compatibility: files
+// written by earlier builds still contain kCommandSetTabWindow +
+// kCommandAddTabExtraData and replay exactly as before.
+SESSIONS_EXPORT std::unique_ptr<SessionCommand>
+CreateSetTabWindowWithEnvironmentCommand(SessionID window_id,
+                                         SessionID tab_id,
+                                         const std::string& environment_key,
+                                         const std::string& environment_id);
 SESSIONS_EXPORT std::unique_ptr<SessionCommand> CreateSetWindowBoundsCommand(
     SessionID window_id,
     const gfx::Rect& bounds,

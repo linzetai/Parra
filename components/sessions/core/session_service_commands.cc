@@ -111,6 +111,42 @@ static const SessionCommand::id_type kCommandSetPlatformSessionId = 35;
 static const SessionCommand::id_type kCommandSetSplitTab = 36;
 static const SessionCommand::id_type kCommandSetSplitTabData = 37;
 
+// Parra: a tab's window membership AND its environment ownership in ONE record.
+//
+// WHY A NEW COMMAND RATHER THAN A SECOND AddTabExtraData CALL
+// ----------------------------------------------------------
+// The pre-existing two-command form was:
+//     [kCommandSetTabWindow: window_id, tab_id]      <- structure
+//     [kCommandAddTabExtraData: tab_id, env_key, id] <- ownership
+// Both are separate SessionCommands, so they are separate length-prefixed
+// records in the file, and the file is appended to incrementally with a
+// ~2.5s save timer. A crash between the two appends therefore leaves exactly
+// the state this phase exists to remove: the tab's structure is recoverable but
+// nothing records which environment it belonged to, and restore cannot tell it
+// from a stock Chromium tab -- so it lands in Personal.
+//
+// The property we need is not "both are scheduled in the same function call"
+// (that is only ordering, not atomicity) but "the reader can never observe one
+// without the other". That is achieved by putting both facts inside a SINGLE
+// command's contents: SessionCommand::Serialize() emits one length prefix and
+// one id, so the record is written by one AppendCommandsToFile() write of the
+// whole serialized command, and SessionFileReader::ReadCommand() either reads
+// the complete command or reports kInvalidCommand for a lost tail. There is no
+// intermediate byte range in which the structure parses but the environment
+// does not.
+//
+// BACKWARD/FORWARD COMPATIBILITY
+// ------------------------------
+// * Old files are unaffected: kCommandSetTabWindow and kCommandAddTabExtraData
+//   keep their ids and are still replayed exactly as before, so a session
+//   written by an older build restores with the old (two-record) semantics.
+// * Forward: an older build reading a file containing this id hits the
+//   `default:` branch of CreateTabsAndWindows(), which aborts the replay at that
+//   command. It does not mis-read the command as something else. That is the
+//   same behaviour every unknown id has always had, so a downgrade degrades to
+//   "this newer session is not loadable", never to "this tab is Personal".
+static const SessionCommand::id_type kCommandSetTabWindowWithEnvironment = 38;
+
 // ID 255 is used by CommandStorageBackend.
 
 namespace {
@@ -581,6 +617,43 @@ bool CreateTabsAndWindows(
         SessionID window_id = SessionID::FromSerializedValue(payload[0]);
         SessionID tab_id = SessionID::FromSerializedValue(payload[1]);
         GetTab(tab_id, tabs)->window_id = window_id;
+        break;
+      }
+
+      // Parra: window membership AND environment ownership, in one record.
+      //
+      // This is the atomic form of the kCommandSetTabWindow +
+      // kCommandAddTabExtraData pair. Because both facts arrive in a single
+      // command, a replay can never obtain the tab's structure without also
+      // obtaining its environment: the command is either deserialized whole or
+      // rejected whole by SessionFileReader::ReadCommand() (which reports
+      // kInvalidCommand for a truncated tail and stops before this branch ever
+      // runs).
+      //
+      // A malformed PAYLOAD (right id, wrong contents) is reported as corruption
+      // and aborts the replay, exactly like every other command with a bad
+      // payload. That is deliberate: silently treating a corrupt ownership record
+      // as "no environment recorded" is the failure mode this whole phase exists
+      // to remove, so it must not be a fallback here either.
+      case kCommandSetTabWindowWithEnvironment: {
+        base::PickleIterator iterator = command->ContentsAsPickle();
+        int window_id_value = 0;
+        int tab_id_value = 0;
+        std::string environment_key;
+        std::string environment_id;
+        if (!iterator.ReadInt(&window_id_value) ||
+            !iterator.ReadInt(&tab_id_value) ||
+            !iterator.ReadString(&environment_key) ||
+            !iterator.ReadString(&environment_id)) {
+          DVLOG(1) << "Failed reading command " << command->id();
+          return false;
+        }
+        const SessionID window_id =
+            SessionID::FromSerializedValue(window_id_value);
+        const SessionID tab_id = SessionID::FromSerializedValue(tab_id_value);
+        SessionTab* tab = GetTab(tab_id, tabs);
+        tab->window_id = window_id;
+        tab->extra_data[environment_key] = std::move(environment_id);
         break;
       }
 
@@ -1098,6 +1171,35 @@ std::unique_ptr<SessionCommand> CreateSetTabWindowCommand(SessionID window_id,
                                                           SessionID tab_id) {
   SessionID::id_type payload[] = { window_id.id(), tab_id.id() };
   return CreateSessionCommandForPayload(kCommandSetTabWindow, payload);
+}
+
+std::unique_ptr<SessionCommand>
+CreateSetTabWindowWithEnvironmentCommand(SessionID window_id,
+                                         SessionID tab_id,
+                                         const std::string& environment_key,
+                                         const std::string& environment_id) {
+  // One pickle -> one SessionCommand -> one length-prefixed record on disk.
+  //
+  // Layout (all little-endian native, as base::Pickle always is):
+  //   int32  window_id
+  //   int32  tab_id
+  //   int32  key_length          (bytes, -1 when the key is absent)
+  //   bytes  environment_key     (key_length bytes, no NUL)
+  //   int32  value_length        (bytes)
+  //   bytes  environment_id      (value_length bytes, no NUL)
+  //
+  // The key is carried INSIDE the record rather than implied by the command id.
+  // That keeps the on-disk contract explicit: a reader that does not recognise
+  // the key still sees the record as one atomic unit containing both the tab's
+  // window membership and an extra_data pair, and a future key change does not
+  // silently reinterpret old records.
+  base::Pickle pickle;
+  pickle.WriteInt(window_id.id());
+  pickle.WriteInt(tab_id.id());
+  pickle.WriteString(environment_key);
+  pickle.WriteString(environment_id);
+  return std::make_unique<SessionCommand>(kCommandSetTabWindowWithEnvironment,
+                                          pickle);
 }
 
 std::unique_ptr<SessionCommand> CreateSetWindowBoundsCommand(

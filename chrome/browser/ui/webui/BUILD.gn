@@ -134,6 +134,9 @@ source_set("configs") {
       "//chrome/browser/ui/webui/on_device_internals",
       "//chrome/browser/ui/webui/organizer_panel",
       "//chrome/browser/ui/webui/page_action_internals",
+      # Parra: chrome://parra -- the environment management page. Registered in
+      # chrome_web_ui_configs.cc, so its config type must be linkable from there.
+      "//chrome/browser/ui/webui/parra:parra_webui",
       "//chrome/browser/ui/webui/password_manager:password_manager_ui",
       "//chrome/browser/ui/webui/profile_internals",
       "//chrome/browser/ui/webui/search_engine_choice",

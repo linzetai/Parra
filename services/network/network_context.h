@@ -131,6 +131,7 @@ class SimpleUrlPatternMatcher;
 namespace network {
 class CookieManager;
 class HostResolver;
+class HostOverrideProxyResolutionService;
 class MdnsResponderManager;
 class MojoBackendFileOperationsFactory;
 class NetworkService;
@@ -165,7 +166,8 @@ struct ResourceRequest;
 // and the mojo::Remote<NetworkContext> used to talk to them, and the
 // NetworkContext is destroyed when either one is torn down.
 class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkContext
-    : public mojom::NetworkContext
+        : public mojom::NetworkContext,
+            public mojom::HostOverridePolicyClient
 #if BUILDFLAG(ENABLE_REPORTING)
     ,
       public net::ReportingCacheObserver
@@ -355,12 +357,32 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkContext
                               ClearDomainReliabilityCallback callback) override;
   void CloseAllConnections(CloseAllConnectionsCallback callback) override;
   void CloseIdleConnections(CloseIdleConnectionsCallback callback) override;
+  void SetHostMappingRules(const std::string& rules,
+                           uint64_t revision,
+                           SetHostMappingRulesCallback callback) override;
+  void UpdateHostOverridePolicy(mojom::HostOverridePolicy policy,
+                                const std::string& reason) override;
   void SetNetworkConditions(
       const base::UnguessableToken& throttling_profile_id,
       const base::UnguessableToken& throttling_client_id,
       std::vector<mojom::MatchedNetworkConditionsPtr> conditions) override;
   void SetAcceptLanguage(const std::string& new_accept_language) override;
   void SetEnableReferrers(bool enable_referrers) override;
+
+    // In-process test hook for replacing this NetworkContext's live mapping
+    // snapshot. Production updates use the Mojo method above.
+  bool SetHostMappingRulesForTesting(const std::string& rules);
+
+  // Parra P3.4 PoC-1: why the last rules update did not apply, if it did not.
+  // Exists so a caller can report a diagnosable reason instead of a silent
+  // no-op.
+  std::string LastHostMappingErrorForTesting() const {
+    return host_mapping_error_;
+  }
+
+    bool ApplyHostMappingRules(const std::string& rules,
+                                                         uint64_t revision,
+                                                         std::string* error);
 #if BUILDFLAG(IS_CT_SUPPORTED)
   void SetCTPolicy(mojom::CTPolicyPtr ct_policy) override;
   void MaybeEnqueueSCTReport(
@@ -1040,8 +1062,20 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkContext
   using Receiver = mojo::Receiver<mojom::NetworkContext>;
   using DirectReceiver = mojo::DirectReceiver<mojom::NetworkContext>;
   std::variant<Receiver, DirectReceiver> receiver_;
+    mojo::Receiver<mojom::HostOverridePolicyClient>
+            host_override_policy_receiver_{this};
+    uint64_t host_mapping_generation_ = 0;
+    uint64_t host_mapping_revision_ = 0;
+    mojom::HostOverridePolicy host_override_policy_ =
+            mojom::HostOverridePolicy::kUnknown;
+    std::string host_override_policy_reason_;
 
   std::unique_ptr<CookieManager> cookie_manager_;
+
+    // Owned by url_request_context_'s ProxyResolutionService wrapper. Set only
+    // for Parra Environment contexts by URLRequestContextBuilderMojo.
+    raw_ptr<HostOverrideProxyResolutionService>
+            host_override_proxy_resolution_service_ = nullptr;
 
   std::unique_ptr<SocketFactory> socket_factory_;
 
@@ -1104,6 +1138,11 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkContext
 
   // Owned by the URLRequestContext
   raw_ptr<net::StaticHttpUserAgentSettings> user_agent_settings_ = nullptr;
+
+  // Parra P3.4 PoC-1: why the most recent host-mapping update failed, if it
+  // did. Kept so the caller can report a diagnosable reason instead of a silent
+  // no-op.
+  std::string host_mapping_error_;
 
 #if BUILDFLAG(IS_CT_SUPPORTED)
   scoped_refptr<certificate_transparency::ChromeRequireCTDelegate>

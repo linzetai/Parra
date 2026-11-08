@@ -1,0 +1,22 @@
+# Copyright 2026 The Parra Authors
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Strings for the Parra environment switcher.
+#
+# This is a feature-local strings target rather than an addition to
+# chrome/app/generated_resources.grd: touching that .grd regenerates a header that
+# essentially the whole browser includes, which turns a one-line string change into
+# a full rebuild. See parra_strings.grd for the longer explanation.
+#
+# IMPORTANT: a grit_strings target on its own only produces .pak files. The pak is
+# made available at runtime by an entry in chrome/chrome_repack_locales.gni -- a
+# strings target that is not listed there compiles and links perfectly and then
+# returns empty strings at runtime, because the resource is simply never loaded.
+import("//tools/grit/grit_rule.gni")
+
+grit_strings("parra_strings") {
+  source = "parra_strings.grd"
+
+  outputs = [ "grit/parra_strings.h" ]
+}

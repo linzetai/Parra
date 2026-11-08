@@ -61,6 +61,7 @@ class ReloadButton;
 class WebUIToolbarWebView;
 class PinnedToolbarActionsContainer;
 class ToolbarButton;
+
 class AvatarToolbarButtonBrowserTest;
 class ToolbarController;
 class ToolbarDivider;
@@ -418,6 +419,12 @@ class ToolbarView : public views::AccessiblePaneView,
   raw_ptr<CustomTabBarView> custom_tab_bar_ = nullptr;
   raw_ptr<LocationBarView> location_bar_view_ = nullptr;
 
+  // Parra: the environment switcher.
+  //
+  // Null in windows that do not create a toolbar control set (custom-tab
+  // windows use custom_tab_bar_ and skip the normal toolbar). Owned by the view
+  // hierarchy.
+
   // An alias for `location_bar_view_` or `toolbar_webview_->GetLocationBar()`.
   raw_ptr<LocationBar> location_bar_ = nullptr;
   raw_ptr<ExtensionsToolbarDesktop> extensions_container_ = nullptr;
@@ -501,8 +508,7 @@ class ToolbarView : public views::AccessiblePaneView,
   base::CallbackListSubscription vertical_tab_subscription_;
 
   // Subscription for when contextual tasks button position should update.
-  base::CallbackListSubscription
-      contextual_tasks_button_position_subscription_;
+  base::CallbackListSubscription contextual_tasks_button_position_subscription_;
 
   bool should_display_vertical_tabs_ = false;
   bool should_show_glic_button_ = false;

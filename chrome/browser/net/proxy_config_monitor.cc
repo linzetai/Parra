@@ -9,11 +9,16 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#if BUILDFLAG(IS_WIN)
+#include "base/win/registry.h"
+#endif  // BUILDFLAG(IS_WIN)
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/net/proxy_service_factory.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
 #include "chrome/browser/profiles/profile.h"
+#include "components/proxy_config/proxy_config_pref_names.h"
+#include "components/proxy_config/proxy_prefs.h"
 #include "components/enterprise/buildflags/buildflags.h"
 #include "components/proxy_config/pref_proxy_config_tracker_impl.h"
 #include "content/public/browser/browser_thread.h"
@@ -35,6 +40,52 @@
 
 using content::BrowserThread;
 
+#if BUILDFLAG(IS_WIN)
+namespace {
+
+bool IsWindowsProxyPolicyManaged() {
+  constexpr wchar_t kInternetSettingsPolicy[] =
+      L"Software\\Policies\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
+  constexpr wchar_t kInternetControlPanelPolicy[] =
+      L"Software\\Policies\\Microsoft\\Internet Explorer\\Control Panel";
+  for (HKEY hive : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE}) {
+    base::win::RegKey internet_settings(hive, kInternetSettingsPolicy,
+                                        KEY_READ);
+    if (internet_settings.Valid()) {
+      DWORD value = 0;
+      if (internet_settings.ReadValueDW(L"ProxySettingsPerUser", &value) ==
+              ERROR_SUCCESS ||
+          internet_settings.ReadValueDW(L"ProxyEnable", &value) ==
+              ERROR_SUCCESS) {
+        return true;
+      }
+      std::wstring proxy_server;
+      std::wstring pac_url;
+      if ((internet_settings.ReadValue(L"ProxyServer", &proxy_server) ==
+               ERROR_SUCCESS &&
+           !proxy_server.empty()) ||
+          (internet_settings.ReadValue(L"AutoConfigURL", &pac_url) ==
+               ERROR_SUCCESS &&
+           !pac_url.empty())) {
+        return true;
+      }
+    }
+
+    base::win::RegKey control_panel(hive, kInternetControlPanelPolicy,
+                                    KEY_READ);
+    DWORD proxy_locked = 0;
+    if (control_panel.Valid() &&
+        control_panel.ReadValueDW(L"Proxy", &proxy_locked) == ERROR_SUCCESS &&
+        proxy_locked != 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+#endif  // BUILDFLAG(IS_WIN)
+
 ProxyConfigMonitor::ProxyConfigMonitor(Profile* profile) {
   CHECK_CURRENTLY_ON(content::BrowserThread::UI, base::NotFatalUntil::M161);
   CHECK(profile, base::NotFatalUntil::M161);
@@ -42,6 +93,18 @@ ProxyConfigMonitor::ProxyConfigMonitor(Profile* profile) {
 #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
   profile_ = profile;
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+  profile_for_host_override_ = profile;
+  host_override_pref_change_registrar_.Init(profile->GetPrefs());
+  host_override_pref_change_registrar_.Add(
+      proxy_config::prefs::kProxy,
+      base::BindRepeating(
+          &ProxyConfigMonitor::OnHostOverridePolicyPrefChanged,
+          base::Unretained(this)));
+  host_override_pref_change_registrar_.Add(
+      proxy_config::prefs::kProxyOverrideRules,
+      base::BindRepeating(
+          &ProxyConfigMonitor::OnHostOverridePolicyPrefChanged,
+          base::Unretained(this)));
 
 // If this is the ChromeOS sign-in or lock screen profile, just create the
 // tracker from global state.
@@ -96,7 +159,10 @@ ProxyConfigMonitor::~ProxyConfigMonitor() {
 }
 
 void ProxyConfigMonitor::AddToNetworkContextParams(
-    network::mojom::NetworkContextParams* network_context_params) {
+  network::mojom::NetworkContextParams* network_context_params,
+  bool enable_host_override,
+  const std::string& host_mapping_rules,
+  uint64_t host_mapping_revision) {
   mojo::PendingRemote<network::mojom::ProxyConfigClient> proxy_config_client;
   network_context_params->proxy_config_client_receiver =
       proxy_config_client.InitWithNewPipeAndPassReceiver();
@@ -118,6 +184,27 @@ void ProxyConfigMonitor::AddToNetworkContextParams(
       proxy_config_service_->GetLatestProxyConfig(&proxy_config);
   if (availability != net::ProxyConfigService::CONFIG_PENDING)
     network_context_params->initial_proxy_config = proxy_config;
+
+  if (enable_host_override) {
+    custom_proxy_configuration_active_ =
+      custom_proxy_configuration_active_ ||
+      !!network_context_params->initial_custom_proxy_config ||
+      network_context_params->custom_proxy_config_client_receiver.is_valid();
+    network_context_params->parra_host_override_enabled = true;
+    network_context_params->parra_host_override_rules = host_mapping_rules;
+    network_context_params->host_mapping_revision = host_mapping_revision;
+    const auto [policy, reason] =
+        GetHostOverridePolicy(proxy_config, availability,
+                    custom_proxy_configuration_active_);
+    network_context_params->host_override_policy = policy;
+    network_context_params->host_override_policy_reason = reason;
+
+    mojo::PendingRemote<network::mojom::HostOverridePolicyClient>
+        host_override_policy_client;
+    network_context_params->host_override_policy_client_receiver =
+        host_override_policy_client.InitWithNewPipeAndPassReceiver();
+    host_override_policy_client_set_.Add(std::move(host_override_policy_client));
+  }
 }
 
 std::optional<bool> ProxyConfigMonitor::IsProxyConfigured() const {
@@ -169,6 +256,93 @@ void ProxyConfigMonitor::OnProxyConfigChanged(
         NOTREACHED();
     }
   }
+  NotifyHostOverridePolicyClients(config, availability);
+}
+
+void ProxyConfigMonitor::OnHostOverridePolicyPrefChanged() {
+  if (!proxy_config_service_) {
+    return;
+  }
+  net::ProxyConfigWithAnnotation config;
+  const auto availability =
+      proxy_config_service_->GetLatestProxyConfig(&config);
+  NotifyHostOverridePolicyClients(config, availability);
+}
+
+void ProxyConfigMonitor::NotifyHostOverridePolicyClients(
+    const net::ProxyConfigWithAnnotation& config,
+    net::ProxyConfigService::ConfigAvailability availability) {
+  const auto [policy, reason] = GetHostOverridePolicy(
+      config, availability, custom_proxy_configuration_active_);
+  for (const auto& host_override_client : host_override_policy_client_set_) {
+    host_override_client->UpdateHostOverridePolicy(policy, reason);
+  }
+}
+
+std::pair<network::mojom::HostOverridePolicy, std::string>
+ProxyConfigMonitor::GetHostOverridePolicy(
+    const net::ProxyConfigWithAnnotation& config,
+    net::ProxyConfigService::ConfigAvailability availability,
+    bool custom_proxy_config) const {
+  using Policy = network::mojom::HostOverridePolicy;
+  if (availability == net::ProxyConfigService::CONFIG_PENDING ||
+      !profile_for_host_override_) {
+    return {Policy::kUnknown, "proxy policy source is not yet known"};
+  }
+
+  if (custom_proxy_config) {
+    return {Policy::kBlockedByPolicy,
+            "custom proxy configuration source is not classified"};
+  }
+
+#if BUILDFLAG(IS_WIN)
+  if (IsWindowsProxyPolicyManaged()) {
+    return {Policy::kBlockedByPolicy,
+            "Windows Internet Settings proxy is managed by policy"};
+  }
+#endif  // BUILDFLAG(IS_WIN)
+
+  const net::ProxyConfig& effective_config = config.value();
+  if (!effective_config.dynamic_routing_config().routing_rules.empty()) {
+    return {Policy::kBlockedByPolicy,
+            "enterprise dynamic proxy routing is active"};
+  }
+
+  net::ProxyConfigWithAnnotation preference_config;
+    policy::PolicyService* policy_service =
+      profile_for_host_override_->GetProfilePolicyConnector()->policy_service();
+  const ProxyPrefs::ConfigState source =
+      PrefProxyConfigTrackerImpl::ReadPrefConfig(
+          profile_for_host_override_->GetPrefs(), &preference_config,
+        policy_service);
+
+  switch (source) {
+    case ProxyPrefs::CONFIG_POLICY:
+    case ProxyPrefs::CONFIG_POLICY_OVERRIDE:
+    case ProxyPrefs::CONFIG_POLICY_DYNAMIC_ROUTING:
+      return {Policy::kBlockedByPolicy,
+              "managed Chrome proxy policy forbids DIRECT override"};
+    case ProxyPrefs::CONFIG_OTHER_PRECEDE:
+    case ProxyPrefs::CONFIG_EXTENSION:
+    case ProxyPrefs::CONFIG_EXTENSION_OVERRIDE:
+    case ProxyPrefs::CONFIG_SYSTEM:
+    case ProxyPrefs::CONFIG_FALLBACK:
+    case ProxyPrefs::CONFIG_UNSET:
+      break;
+  }
+
+  if (effective_config.pac_mandatory()) {
+    return {Policy::kMandatoryProxy,
+            "mandatory PAC configuration forbids DIRECT override"};
+  }
+
+  if (!effective_config.proxy_override_rules().empty() &&
+      source != ProxyPrefs::CONFIG_EXTENSION_OVERRIDE) {
+    return {Policy::kBlockedByPolicy,
+            "proxy override rules are active but their permission is unknown"};
+  }
+
+  return {Policy::kAllowed, "proxy source permits Environment DIRECT override"};
 }
 
 void ProxyConfigMonitor::OnLazyProxyConfigPoll() {

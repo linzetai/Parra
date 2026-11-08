@@ -491,12 +491,10 @@ inline constexpr char kDeskAPIThirdPartyAllowlist[] =
 inline constexpr char kPrintingAPIExtensionsAllowlist[] =
     "printing.printing_api_extensions_whitelist";
 
-
 // A boolean specifying whether the insights extension is enabled. If set to
 // true, the CCaaS Chrome component extension will be installed.
 inline constexpr char kInsightsExtensionEnabled[] =
     "insights_extension_enabled";
-
 
 // A boolean pref which turns on the mediaplayer.
 inline constexpr char kLabsMediaplayerEnabled[] = "settings.labs.mediaplayer";
@@ -504,8 +502,6 @@ inline constexpr char kLabsMediaplayerEnabled[] = "settings.labs.mediaplayer";
 // A string pref that contains version where "What's new" promo was shown.
 inline constexpr char kChromeOSReleaseNotesVersion[] =
     "settings.release_notes.version";
-
-
 
 // A boolean pref. If set to true, the Unified Desktop feature is made
 // available and turned on by default, which allows applications to span
@@ -543,7 +539,6 @@ inline constexpr char kMinimumAllowedChromeVersion[] = "minimum_req.version";
 inline constexpr char kShowArcSettingsOnSessionStart[] =
     "start_arc_settings_on_session_start";
 
-
 // Dictionary preference that maps language to default voice name preferences
 // for the users's text-to-speech settings. For example, this might map
 // 'en-US' to 'Chrome OS US English'.
@@ -564,7 +559,6 @@ inline constexpr char kTextToSpeechPitch[] = "settings.tts.speech_pitch";
 // relative to the system volume, where lower than 1.0 is quieter than the
 // system volume, and higher than 1.0 is louder.
 inline constexpr char kTextToSpeechVolume[] = "settings.tts.speech_volume";
-
 
 // A string pref storing the path of device wallpaper image file.
 inline constexpr char kDeviceWallpaperImageFilePath[] =
@@ -2332,19 +2326,12 @@ inline constexpr char kDeviceRobotAnyApiRefreshTokenV2[] =
 inline constexpr char kDeviceRefreshTokenAnyApiIsV3Used[] =
     "device_refresh_token_is_v3_used.any-api";
 
-
-
-
-
-
-
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 // String which specifies where to store the disk cache.
 inline constexpr char kDiskCacheDir[] = "browser.disk_cache_dir";
 // Pref name for the policy specifying the maximal cache size.
 inline constexpr char kDiskCacheSize[] = "browser.disk_cache_size";
-
 
 // Pref name for the policy controlling whether to enable Media Router.
 inline constexpr char kEnableMediaRouter[] = "media_router.enable_media_router";
@@ -2480,7 +2467,6 @@ inline constexpr char kPreviousIsolationState[] = "isolation_state.previous";
 // Hardware acceleration mode from previous browser launch.
 inline constexpr char kHardwareAccelerationModePrevious[] =
     "hardware_acceleration_mode_previous";
-
 
 #if !BUILDFLAG(IS_ANDROID)
 // A boolean specifying whether dynamic child module patching is enabled.
@@ -3028,7 +3014,6 @@ inline constexpr char kOriginAgentClusterDefaultEnabled[] =
 inline constexpr char kSCTAuditingHashdanceReportCount[] =
     "sct_auditing.hashdance_report_count";
 
-
 #if !BUILDFLAG(IS_ANDROID)
 // An integer count of how many times the user has seen the memory saver mode
 // page action chip in the expanded size. While the feature was renamed to
@@ -3353,17 +3338,29 @@ inline constexpr char kParraEnvironments[] = "parra.environments";
 
 // Parra: host-mapping rules for the reserved `personal` environment.
 //
-// Separate from kParraEnvironments because `personal` is IMPLICIT: it is never a
-// stored Environment record (its id is reserved and it maps to the default
+// Separate from kParraEnvironments because `personal` is IMPLICIT: it is never
+// a stored Environment record (its id is reserved and it maps to the default
 // StoragePartition), yet it still needs host rules of its own.
 //
 // This key exists because of a real defect: the one-time command-line import
-// skipped `personal` (correctly, since the reader rejects a record with a reserved
-// id), which silently dropped Personal's rules and left every Personal page
-// resolving against real DNS. Keeping the rules in their own key lets the
+// skipped `personal` (correctly, since the reader rejects a record with a
+// reserved id), which silently dropped Personal's rules and left every Personal
+// page resolving against real DNS. Keeping the rules in their own key lets the
 // definition list stay purely user-defined while Personal keeps its routing.
 inline constexpr char kParraPersonalHostMappings[] =
     "parra.personal_host_mappings";
+
+// Source grammar for kParraPersonalHostMappings. Empty means the profile predates
+// explicit formats: non-empty old rules are Chromium MAP/EXCLUDE, while an empty
+// Personal mapping uses the new Standard Hosts editor default.
+inline constexpr char kParraPersonalHostMappingFormat[] =
+    "parra.personal_host_mapping_format";
+
+// Profile-local routing of HTTP/HTTPS URLs received from another process.
+// 0 asks every time, 1 uses the active window, 2 uses the named environment.
+inline constexpr char kParraExternalLinkPolicy[] = "parra.external_link_policy";
+inline constexpr char kParraExternalLinkEnvironment[] =
+    "parra.external_link_environment";
 
 }  // namespace prefs
 

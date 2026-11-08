@@ -31,6 +31,10 @@ struct StartupTab {
   // True if this tab was launched from an untrusted external custom protocol
   // (e.g., google-chrome://) that was stripped on startup.
   bool is_untrusted_launch = false;
+
+  // HTTP/HTTPS passed by another process or on the initial command line.
+  // Parra routes these only after the user/policy chooses a partition.
+  bool is_parra_external_link = false;
 };
 
 using StartupTabs = std::vector<StartupTab>;

@@ -421,6 +421,10 @@ void StaleHostResolver::SetRequestContext(URLRequestContext* request_context) {
   inner_resolver_->SetRequestContext(request_context);
 }
 
+bool StaleHostResolver::SetHostMappingRules(std::string_view rules) {
+  return inner_resolver_->SetHostMappingRules(rules);
+}
+
 bool StaleHostResolver::IsHappyEyeballsV3Enabled() const {
   return inner_resolver_->IsHappyEyeballsV3Enabled();
 }

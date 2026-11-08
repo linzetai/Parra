@@ -164,6 +164,8 @@ StartupTabs StartupTabProviderImpl::GetCommandLineTabs(
     if (parsed_arg.tab_parsed == CommandLineTabsPresent::kYes) {
       result.emplace_back(std::move(parsed_arg.tab_url),
                           parsed_arg.is_untrusted_launch);
+      result.back().is_parra_external_link =
+          result.back().url.SchemeIsHTTPOrHTTPS();
     }
   }
 

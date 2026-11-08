@@ -376,6 +376,12 @@ inline constexpr char kChromeUIWebUIToolbarHost[] = "webui-toolbar.top-chrome";
 inline constexpr char kChromeUIWebNNInternalsHost[] = "webnn-internals";
 inline constexpr char kChromeUIIndigoInternalsHost[] = "indigo-internals";
 
+// Parra: the environment management page. A top-level host rather than a
+// Settings subpage, because managing environments is its own task and the page
+// needs the full width for a list + detail layout.
+inline constexpr char kChromeUIParraHost[] = "parra";
+inline constexpr char kChromeUIParraURL[] = "chrome://parra/";
+
 #if BUILDFLAG(IS_ANDROID)
 inline constexpr char kChromeUIChromeFindsInternalsHost[] =
     "chrome-finds-internals";

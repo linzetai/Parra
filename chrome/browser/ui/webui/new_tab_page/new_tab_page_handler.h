@@ -125,6 +125,8 @@ class NewTabPageHandler
 
   // new_tab_page::mojom::PageHandler:
   void SetMostVisitedSettings(ntp_tiles::TileType type, bool visible) override;
+  void GetParraEnvironmentIdentity(
+      GetParraEnvironmentIdentityCallback callback) override;
   void GetMostVisitedSettings(GetMostVisitedSettingsCallback callback) override;
   void GetDoodle(GetDoodleCallback callback) override;
   void OnDismissModule(const std::string& module_id) override;

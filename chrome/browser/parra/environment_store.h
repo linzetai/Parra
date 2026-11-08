@@ -172,6 +172,11 @@ class EnvironmentStore : public KeyedService {
   std::string GetHostMappingRulesForPartitionPath(
       const base::FilePath& relative_partition_path) const;
 
+    bool IsParraPartitionPath(
+      const base::FilePath& relative_partition_path) const;
+    uint64_t GetHostMappingRevisionForPartitionPath(
+      const base::FilePath& relative_partition_path) const;
+
   // Computes the relative partition path for (domain, name). Pure function,
   // mirrors content's StoragePartitionImplMap::GetStoragePartitionPath().
   static base::FilePath GetRelativePartitionPathForConfig(
@@ -203,6 +208,7 @@ class EnvironmentStore : public KeyedService {
   // Needed because Personal is implicit (never a stored record), so its routing
   // had no place to live and the command-line import silently dropped it.
   StoreResult SetPersonalHostMappings(std::string_view host_mappings,
+                                      HostMappingFormat format,
                                       std::string* error);
 
   // Removes the definition. DOES NOT touch any StoragePartition: see
@@ -275,6 +281,7 @@ class EnvironmentStore : public KeyedService {
   PersistState persist_state_ = PersistState::kUnchanged;
 
   bool read_only_ = false;
+  uint64_t personal_host_mapping_revision_ = 1;
 
   std::string load_diagnostics_;
   int rejected_record_count_ = 0;

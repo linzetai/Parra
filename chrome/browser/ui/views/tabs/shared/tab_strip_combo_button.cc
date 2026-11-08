@@ -384,15 +384,8 @@ void TabStripComboButton::SetTabSearchBubbleHost(TabSearchBubbleHost* host) {
   tab_search_bubble_host_observation_.Reset();
   if (host) {
     tab_search_bubble_host_observation_.Observe(host);
-    const bool use_vertical_strip_icon = context_ == Context::kVerticalTabStrip;
-
-    GetEndButtonActionItem()->SetImage(ui::ImageModel::FromVectorIcon(
-        use_vertical_strip_icon
-            ? (features::IsRoundedIconsEnabled() ? kManageSearchIcon
-                                                 : kTabSearchTabStripOldIcon)
-            : (features::IsRoundedIconsEnabled()
-                   ? vector_icons::kKeyboardArrowDownIcon
-                   : vector_icons::kExpandMoreOldIcon)));
+    GetEndButtonActionItem()->SetImage(
+        ui::ImageModel::FromVectorIcon(kManageSearchIcon));
   }
 }
 

@@ -30,8 +30,8 @@ namespace parra {
 namespace {
 
 // The partition domain shared by every Parra environment. Must be a non-empty
-// ASCII lowercase token: //content CHECKs against an empty domain and hashes the
-// name, so a user-visible string never reaches the filesystem directly.
+// ASCII lowercase token: //content CHECKs against an empty domain and hashes
+// the name, so a user-visible string never reaches the filesystem directly.
 //
 // All environments sharing one domain is precisely why
 // BrowserContext::AsyncObliterateStoragePartition() cannot be used for a
@@ -47,8 +47,8 @@ constexpr char kDefaultPartitionDirname[] = "def";
 constexpr size_t kPartitionNameHashBytes = 6;
 
 // A name is required, but a missing one must not cost the user the environment.
-// 64 code units, not bytes: the check is on the stored string's length, which is
-// what the UI will render.
+// 64 code units, not bytes: the check is on the stored string's length, which
+// is what the UI will render.
 bool IsUsableName(const std::string& name) {
   return !name.empty() && name.size() <= 64;
 }
@@ -71,8 +71,9 @@ const char* PersistStateToString(PersistState state) {
 
 // static
 EnvironmentStore* EnvironmentStore::GetForProfile(Profile* profile) {
-  if (!profile)
+  if (!profile) {
     return nullptr;
+  }
   return EnvironmentStoreFactory::GetForProfile(profile);
 }
 
@@ -88,8 +89,7 @@ EnvironmentStore::EnvironmentStore(Profile* profile) : profile_(profile) {
             << " read_only=" << (read_only_ ? "true" : "false")
             << " persist_state=" << PersistStateToString(persist_state_)
             << (load_diagnostics_.empty() ? "" : " diagnostics='")
-            << load_diagnostics_
-            << (load_diagnostics_.empty() ? "" : "'");
+            << load_diagnostics_ << (load_diagnostics_.empty() ? "" : "'");
 }
 
 EnvironmentStore::~EnvironmentStore() = default;
@@ -100,13 +100,30 @@ Environment EnvironmentStore::PersonalEnvironment() const {
   personal.id = std::string(kDefaultEnvironmentId);
   personal.name = "Personal";
   personal.enabled = true;
-  // Rules come from a dedicated pref: `personal` is never a stored record (its id
-  // is reserved and the reader rejects such a record), so without this key its
-  // routing had nowhere to live and was silently lost on import.
+  personal.host_mapping_revision = personal_host_mapping_revision_;
+  // Rules come from a dedicated pref: `personal` is never a stored record (its
+  // id is reserved and the reader rejects such a record), so without this key
+  // its routing had nowhere to live and was silently lost on import.
   if (profile_) {
-    if (const PrefService* prefs = profile_->GetPrefs())
+    if (const PrefService* prefs = profile_->GetPrefs()) {
       personal.host_mappings =
           prefs->GetString(::prefs::kParraPersonalHostMappings);
+      const std::string format =
+          prefs->GetString(::prefs::kParraPersonalHostMappingFormat);
+      if (format.empty()) {
+        // A pre-format Personal pref with existing rules was always Chromium
+        // MAP/EXCLUDE. A fresh empty Personal mapping has no legacy text to
+        // reinterpret and uses the new default grammar.
+        if (personal.host_mappings.empty()) {
+          personal.host_mapping_format = HostMappingFormat::kStandardHosts;
+        } else {
+          personal.host_mapping_format = HostMappingFormat::kChromiumMap;
+        }
+      } else if (!HostMappingFormatFromString(format,
+                                              &personal.host_mapping_format)) {
+        personal.host_mapping_format = HostMappingFormat::kUnsupported;
+      }
+    }
   }
   return personal;
 }
@@ -123,10 +140,10 @@ void EnvironmentStore::LoadFromPrefs() {
     return;
   }
 
-  const std::string blob =
-      prefs->GetString(::prefs::kParraEnvironments);
+  const std::string blob = prefs->GetString(::prefs::kParraEnvironments);
 
-  // One-time import from the process-level command line, per docs/parra/50 §8.5.
+  // One-time import from the process-level command line, per docs/parra/50
+  // §8.5.
   //
   // The order matters and is the whole contract:
   //
@@ -140,8 +157,8 @@ void EnvironmentStore::LoadFromPrefs() {
   //      configuration that is not the one stored, and the damaged file would
   //      never be noticed or recovered.
   //
-  // Without step 2, every Phase 2 / P3.1 launch (which configures environments on
-  // the command line) would see an empty store and refuse the tabs it just
+  // Without step 2, every Phase 2 / P3.1 launch (which configures environments
+  // on the command line) would see an empty store and refuse the tabs it just
   // created. That is not a compatibility nicety: it is what makes the two
   // definition sources converge instead of coexisting.
   const ParsedEnvironments parsed = ParseEnvironments(blob);
@@ -150,7 +167,8 @@ void EnvironmentStore::LoadFromPrefs() {
     if (ImportFromCommandLineIfPossible()) {
       // The import wrote to prefs, so the in-memory list is already correct and
       // must NOT be overwritten by the (now stale) parse result.
-      load_diagnostics_ = "imported from command line";
+      // A normal first-run import is not a parse failure, so diagnostics stay
+      // empty.
       persist_state_ = PersistState::kMemoryUpdated;
       LOG(INFO) << "parra-store: imported " << environments_.size()
                 << " environment(s) from the command line and stored them; "
@@ -181,8 +199,8 @@ void EnvironmentStore::LoadFromPrefs() {
       break;
     case ParseStatus::kTooNew:
       // Read-only downgrade. Writing here would delete the fields this binary
-      // does not understand, and the user would only notice after switching back
-      // to the newer build.
+      // does not understand, and the user would only notice after switching
+      // back to the newer build.
       LOG(ERROR) << "parra-store: stored schema is newer than this build ("
                  << load_diagnostics_
                  << "); entering READ-ONLY mode so no data is lost";
@@ -190,7 +208,8 @@ void EnvironmentStore::LoadFromPrefs() {
     case ParseStatus::kCorrupt:
       // Every definition is gone, which is indistinguishable from "the user has
       // none" for anyone who only checks the list. That is why this is reported
-      // as an error and recorded, rather than being treated as an empty profile.
+      // as an error and recorded, rather than being treated as an empty
+      // profile.
       LOG(ERROR) << "parra-store: stored configuration is corrupt ("
                  << load_diagnostics_
                  << "); no environment can be resolved. Tabs that recorded an "
@@ -207,13 +226,15 @@ bool EnvironmentStore::has_user_defined_environments() const {
 bool EnvironmentStore::ImportFromCommandLineIfPossible() {
   // Read the ALREADY PARSED command line result rather than re-parsing
   // --parra-poc-environments here. EnvironmentRegistry remains the single
-  // validator for that switch (id syntax, duplicate detection, host-rule arity);
-  // duplicating it would create exactly the "two definition truth sources" this
-  // phase exists to remove. The registry is used only as a PARSER of a legacy
-  // input, never as a lookup authority once the store holds the result.
+  // validator for that switch (id syntax, duplicate detection, host-rule
+  // arity); duplicating it would create exactly the "two definition truth
+  // sources" this phase exists to remove. The registry is used only as a PARSER
+  // of a legacy input, never as a lookup authority once the store holds the
+  // result.
   EnvironmentRegistry* registry = EnvironmentRegistry::GetInstance();
-  if (!registry->enabled())
+  if (!registry->enabled()) {
     return false;
+  }
 
   std::vector<Environment> imported;
   std::string personal_rules;
@@ -221,9 +242,9 @@ bool EnvironmentStore::ImportFromCommandLineIfPossible() {
   for (const EnvironmentRegistry::Environment& legacy :
        registry->environments()) {
     // `personal` is special: the store never keeps a RECORD for it (its id is
-    // reserved and the reader rejects such a record), but it still needs its host
-    // rules, or every Personal page resolves against real DNS. Capture them into
-    // their dedicated pref instead of dropping them.
+    // reserved and the reader rejects such a record), but it still needs its
+    // host rules, or every Personal page resolves against real DNS. Capture
+    // them into their dedicated pref instead of dropping them.
     if (legacy.id == kDefaultEnvironmentId) {
       personal_rules = legacy.host_mapping_rules;
       continue;
@@ -249,15 +270,19 @@ bool EnvironmentStore::ImportFromCommandLineIfPossible() {
     imported.push_back(std::move(environment));
   }
 
-  if (imported.empty() && personal_rules.empty())
+  if (imported.empty() && personal_rules.empty()) {
     return false;
+  }
 
-  // Personal's rules go to their own pref. Written before the definition list so
-  // that a crash between the two leaves at most the definitions unstored -- and
-  // the next launch re-imports, rather than leaving routing permanently absent.
+  // Personal's rules go to their own pref. Written before the definition list
+  // so that a crash between the two leaves at most the definitions unstored --
+  // and the next launch re-imports, rather than leaving routing permanently
+  // absent.
   if (!personal_rules.empty()) {
     if (PrefService* prefs = profile_ ? profile_->GetPrefs() : nullptr) {
       prefs->SetString(::prefs::kParraPersonalHostMappings, personal_rules);
+      prefs->SetString(::prefs::kParraPersonalHostMappingFormat,
+                       "chromium_map");
       LOG(INFO) << "parra-store: imported personal host_mappings='"
                 << personal_rules << "'";
     }
@@ -268,7 +293,8 @@ bool EnvironmentStore::ImportFromCommandLineIfPossible() {
   if (PersistNow(&error) != StoreResult::kOk) {
     // Keep the definitions in memory anyway: refusing to serve a configuration
     // that was successfully parsed would turn a storage problem into a broken
-    // browser. The persist_state says kPersistFailed, which is the honest answer.
+    // browser. The persist_state says kPersistFailed, which is the honest
+    // answer.
     LOG(ERROR) << "parra-store: imported definitions but could not store them: "
                << error;
     return true;
@@ -282,8 +308,9 @@ const std::vector<Environment>& EnvironmentStore::environments() const {
 
 const Environment* EnvironmentStore::Find(std::string_view id) const {
   for (const Environment& environment : environments_) {
-    if (environment.id == id)
+    if (environment.id == id) {
       return &environment;
+    }
   }
   return nullptr;
 }
@@ -293,10 +320,12 @@ bool EnvironmentStore::IdExists(std::string_view id) const {
 }
 
 bool EnvironmentStore::IsKnownAndEnabled(std::string_view id) const {
-  if (id.empty())
+  if (id.empty()) {
     return false;
-  if (id == kDefaultEnvironmentId)
+  }
+  if (id == kDefaultEnvironmentId) {
     return true;  // reserved, always available
+  }
   const Environment* environment = Find(id);
   return environment && environment->enabled;
 }
@@ -308,11 +337,13 @@ bool EnvironmentStore::IsKnownAndEnabled(std::string_view id) const {
 content::StoragePartitionConfig EnvironmentStore::GetStoragePartitionConfig(
     std::string_view id) const {
   content::BrowserContext* browser_context = profile_;
-  if (!browser_context)
+  if (!browser_context) {
     return content::StoragePartitionConfig();
+  }
 
-  if (id.empty() || id == kDefaultEnvironmentId || !Find(id))
+  if (id.empty() || id == kDefaultEnvironmentId || !Find(id)) {
     return content::StoragePartitionConfig::CreateDefault(browser_context);
+  }
 
   // OTR profiles must never persist partition data. StoragePartitionConfig::
   // Create() already forces `in_memory || IsOffTheRecord()`
@@ -324,8 +355,9 @@ content::StoragePartitionConfig EnvironmentStore::GetStoragePartitionConfig(
   // `parra/test-a` compute the SAME relative path, and only the in_memory flag
   // keeps them apart.
   const bool in_memory = browser_context->IsOffTheRecord();
-  content::StoragePartitionConfig config = content::StoragePartitionConfig::Create(
-      browser_context, kParraPartitionDomain, std::string(id), in_memory);
+  content::StoragePartitionConfig config =
+      content::StoragePartitionConfig::Create(
+          browser_context, kParraPartitionDomain, std::string(id), in_memory);
 
   if (browser_context->IsOffTheRecord() && !config.in_memory()) {
     LOG(ERROR) << "parra-store: INVARIANT VIOLATED: OTR environment '" << id
@@ -338,8 +370,10 @@ content::StoragePartitionConfig EnvironmentStore::GetStoragePartitionConfig(
 
 std::string EnvironmentStore::GetEnvironmentIdForConfig(
     const content::StoragePartitionConfig& config) const {
-  if (config.is_default() || config.partition_domain() != kParraPartitionDomain)
+  if (config.is_default() ||
+      config.partition_domain() != kParraPartitionDomain) {
     return std::string();
+  }
   return config.partition_name();
 }
 
@@ -382,11 +416,11 @@ ResolvedEnvironmentLookup EnvironmentStore::ResolveForEnvironment(
     // is why this is a distinct kind rather than kUnknown: a caller can tell
     // "the environment was switched off" from "the environment is gone".
     //
-    // The partition config IS filled in. `enabled` is selection state and must not
-    // affect where the data lives, so a caller that legitimately needs the storage
-    // location (session restore reviving that environment's tabs instead of
-    // destroying them) must still be able to ask for it. Callers that only consult
-    // kind/ok() see the refusal as before.
+    // The partition config IS filled in. `enabled` is selection state and must
+    // not affect where the data lives, so a caller that legitimately needs the
+    // storage location (session restore reviving that environment's tabs
+    // instead of destroying them) must still be able to ask for it. Callers
+    // that only consult kind/ok() see the refusal as before.
     result.kind = StoreLookupKind::kDisabled;
     result.environment_id = environment->id;
     result.config = GetStoragePartitionConfig(environment->id);
@@ -415,43 +449,93 @@ ResolvedEnvironmentLookup EnvironmentStore::ResolveForEnvironment(
 std::string EnvironmentStore::GetHostMappingRulesForPartitionPath(
     const base::FilePath& relative_partition_path) const {
   // Pure function of (domain, name); deliberately ignores in_memory so an OTR
-  // environment with the same id as a regular one resolves the same hostname the
-  // same way. Data isolation is the in_memory flag, not the rules.
+  // environment with the same id as a regular one resolves the same hostname
+  // the same way. Data isolation is the in_memory flag, not the rules.
   //
   // The empty path IS the default partition. Personal's rules must still be
   // found there: an earlier version returned early on an empty path, which
   // silently disabled host mapping for Personal only and looked exactly like a
   // partition mix-up.
   const Environment personal = PersonalEnvironment();
-  if (relative_partition_path.empty())
-    return personal.host_mappings;
+  if (relative_partition_path.empty()) {
+    std::string compiled;
+    std::vector<HostMappingDiagnostic> diagnostics;
+    if (!CompileHostMappings(personal.host_mapping_format,
+                             personal.host_mappings, &compiled, &diagnostics)) {
+      LOG(ERROR) << "parra-store: Personal host mappings are invalid; routing "
+                    "is disabled until corrected";
+      return std::string();
+    }
+    return compiled;
+  }
   for (const Environment& environment : environments_) {
     // Computed via a synthetic config so the path formula lives in exactly one
-    // place. The config is only used for its (domain, name) pair; Create() would
-    // need a BrowserContext, and the path is a pure function of those two
+    // place. The config is only used for its (domain, name) pair; Create()
+    // would need a BrowserContext, and the path is a pure function of those two
     // strings, so it is derived without one.
     if (EnvironmentRegistry::GetRelativePartitionPathForConfig(
             kParraPartitionDomain, environment.id) == relative_partition_path) {
-      return environment.host_mappings;
+      std::string compiled;
+      std::vector<HostMappingDiagnostic> diagnostics;
+      if (!CompileHostMappings(environment.host_mapping_format,
+                               environment.host_mappings, &compiled,
+                               &diagnostics)) {
+        LOG(ERROR) << "parra-store: host mappings for '" << environment.id
+                   << "' failed to compile; routing is disabled";
+        return std::string();
+      }
+      return compiled;
     }
   }
   return std::string();
 }
 
+bool EnvironmentStore::IsParraPartitionPath(
+    const base::FilePath& relative_partition_path) const {
+  if (relative_partition_path.empty()) {
+    return true;
+  }
+  return std::any_of(environments_.begin(), environments_.end(),
+                     [&relative_partition_path](const Environment& env) {
+                       return EnvironmentRegistry::
+                                  GetRelativePartitionPathForConfig(
+                                      kParraPartitionDomain, env.id) ==
+                              relative_partition_path;
+                     });
+}
+
+uint64_t EnvironmentStore::GetHostMappingRevisionForPartitionPath(
+    const base::FilePath& relative_partition_path) const {
+  if (relative_partition_path.empty()) {
+    return personal_host_mapping_revision_;
+  }
+  for (const Environment& environment : environments_) {
+    if (EnvironmentRegistry::GetRelativePartitionPathForConfig(
+            kParraPartitionDomain, environment.id) ==
+        relative_partition_path) {
+      return environment.host_mapping_revision;
+    }
+  }
+  return 0;
+}
+
 // static
 base::FilePath EnvironmentStore::GetRelativePartitionPathForConfig(
     const content::StoragePartitionConfig& config) {
-  if (config.is_default())
+  if (config.is_default()) {
     return base::FilePath();
-  if (config.partition_domain().empty())
+  }
+  if (config.partition_domain().empty()) {
     return base::FilePath();
+  }
 
-  base::FilePath path = base::FilePath::FromASCII(kStoragePartitionDirname)
-                            .AppendASCII(kExtensionsDirname)
-                            .Append(base::FilePath::FromUTF8Unsafe(
-                                config.partition_domain()));
-  if (config.partition_name().empty())
+  base::FilePath path =
+      base::FilePath::FromASCII(kStoragePartitionDirname)
+          .AppendASCII(kExtensionsDirname)
+          .Append(base::FilePath::FromUTF8Unsafe(config.partition_domain()));
+  if (config.partition_name().empty()) {
     return path.AppendASCII(kDefaultPartitionDirname);
+  }
 
   // Mirrors StoragePartitionImplMap::GetStoragePartitionPath(): SHA-256 of the
   // partition name, truncated to 6 bytes, uppercase hex.
@@ -468,29 +552,33 @@ base::FilePath EnvironmentStore::GetRelativePartitionPathForConfig(
 StoreResult EnvironmentStore::Create(const EnvironmentDraft& draft,
                                      std::string* error) {
   if (read_only_ || (profile_ && profile_->IsOffTheRecord())) {
-    if (error)
+    if (error) {
       *error = read_only_
                    ? "the stored configuration was written by a newer build"
                    : "environment definitions cannot be changed from an "
                      "incognito window (the change would be discarded when the "
                      "window closes)";
+    }
     return StoreResult::kReadOnly;
   }
 
   if (!IsValidEnvironmentId(draft.id)) {
-    if (error)
+    if (error) {
       *error = "invalid id '" + draft.id +
                "' (allowed: [a-z0-9_-], 1..32 characters)";
+    }
     return StoreResult::kInvalidId;
   }
   if (draft.id == kDefaultEnvironmentId) {
-    if (error)
+    if (error) {
       *error = "'personal' is reserved and always exists";
+    }
     return StoreResult::kReservedId;
   }
   if (IdExists(draft.id)) {
-    if (error)
+    if (error) {
       *error = "an environment with id '" + draft.id + "' already exists";
+    }
     return StoreResult::kDuplicateId;
   }
 
@@ -501,6 +589,8 @@ StoreResult EnvironmentStore::Create(const EnvironmentDraft& draft,
   environment.color = draft.color;
   environment.icon = draft.icon;
   environment.host_mappings = draft.host_mappings;
+  environment.host_mapping_format = draft.host_mapping_format;
+  environment.host_mapping_revision = 1;
   environment.created_at = now;
   environment.updated_at = now;
   environment.enabled = true;
@@ -508,10 +598,12 @@ StoreResult EnvironmentStore::Create(const EnvironmentDraft& draft,
   // Validate the COMPLETE record before touching memory, so a rejected create
   // cannot leave anything half-updated.
   std::string validation_error;
-  const StoreResult validation = ValidateEnvironment(environment, &validation_error);
+  const StoreResult validation =
+      ValidateEnvironment(environment, &validation_error);
   if (validation != StoreResult::kOk) {
-    if (error)
+    if (error) {
       *error = validation_error;
+    }
     return validation;
   }
 
@@ -533,8 +625,8 @@ StoreResult EnvironmentStore::Create(const EnvironmentDraft& draft,
   }
 
   LOG(INFO) << "parra-store: created environment '" << environment.id
-            << "' name='" << environment.name << "' persist_state="
-            << PersistStateToString(persist_state_);
+            << "' name='" << environment.name
+            << "' persist_state=" << PersistStateToString(persist_state_);
   NotifyObservers(EnvironmentChangeKind::kCreated, environment.id);
   return StoreResult::kOk;
 }
@@ -543,47 +635,58 @@ StoreResult EnvironmentStore::Update(std::string_view id,
                                      const EnvironmentPatch& patch,
                                      std::string* error) {
   if (read_only_ || (profile_ && profile_->IsOffTheRecord())) {
-    if (error)
+    if (error) {
       *error = read_only_
                    ? "the stored configuration was written by a newer build"
                    : "environment definitions cannot be changed from an "
                      "incognito window (the change would be discarded when the "
                      "window closes)";
+    }
     return StoreResult::kReadOnly;
   }
   if (id == kDefaultEnvironmentId) {
-    if (error)
+    if (error) {
       *error = "'personal' is implicit and cannot be modified";
+    }
     return StoreResult::kReservedId;
   }
 
-  auto it = std::find_if(environments_.begin(), environments_.end(),
-                         [id](const Environment& environment) {
-                           return environment.id == id;
-                         });
+  auto it = std::find_if(
+      environments_.begin(), environments_.end(),
+      [id](const Environment& environment) { return environment.id == id; });
   if (it == environments_.end()) {
-    if (error)
+    if (error) {
       *error = "no environment with id '" + std::string(id) + "'";
+    }
     return StoreResult::kNotFound;
   }
 
   // Build the candidate record, validate it, and only then commit. Mutating in
   // place and validating afterwards would leave a rejected update applied.
   Environment candidate = *it;
-  if (patch.name.has_value())
+  if (patch.name.has_value()) {
     candidate.name = *patch.name;
-  if (patch.color.has_value())
+  }
+  if (patch.color.has_value()) {
     candidate.color = *patch.color;
-  if (patch.icon.has_value())
+  }
+  if (patch.icon.has_value()) {
     candidate.icon = *patch.icon;
-  if (patch.host_mappings.has_value())
+  }
+  if (patch.host_mappings.has_value()) {
     candidate.host_mappings = *patch.host_mappings;
-  if (patch.enabled.has_value())
+  }
+  if (patch.host_mapping_format.has_value()) {
+    candidate.host_mapping_format = *patch.host_mapping_format;
+  }
+  if (patch.enabled.has_value()) {
     candidate.enabled = *patch.enabled;
+  }
 
   if (!IsUsableName(candidate.name)) {
-    if (error)
+    if (error) {
       *error = "name must be 1..64 characters";
+    }
     return StoreResult::kInvalidField;
   }
 
@@ -592,20 +695,22 @@ StoreResult EnvironmentStore::Update(std::string_view id,
   // itself. The remaining fields are validated by the same code path.
   {
     Environment id_checked = candidate;
-    // ValidateEnvironment rejects the reserved id; a stored record can never have
-    // it (LoadFromPrefs drops such a record), so this cannot fire. Kept as a
-    // guard rather than assuming.
+    // ValidateEnvironment rejects the reserved id; a stored record can never
+    // have it (LoadFromPrefs drops such a record), so this cannot fire. Kept as
+    // a guard rather than assuming.
     if (id_checked.id == kDefaultEnvironmentId) {
-      if (error)
+      if (error) {
         *error = "stored record has the reserved id";
+      }
       return StoreResult::kReservedId;
     }
     std::string validation_error;
     const StoreResult validation =
         ValidateEnvironment(id_checked, &validation_error);
     if (validation != StoreResult::kOk) {
-      if (error)
+      if (error) {
         *error = validation_error;
+      }
       return validation;
     }
   }
@@ -613,6 +718,12 @@ StoreResult EnvironmentStore::Update(std::string_view id,
   candidate.updated_at = base::Time::Now();
 
   const Environment previous = *it;
+  if (previous.host_mappings != candidate.host_mappings ||
+      previous.host_mapping_format != candidate.host_mapping_format) {
+    candidate.host_mapping_revision = previous.host_mapping_revision + 1;
+  } else {
+    candidate.host_mapping_revision = previous.host_mapping_revision;
+  }
   *it = candidate;
 
   const StoreResult persisted = PersistNow(error);
@@ -624,19 +735,20 @@ StoreResult EnvironmentStore::Update(std::string_view id,
   }
 
   LOG(INFO) << "parra-store: updated environment '" << candidate.id
-            << "' name='" << candidate.name << "' enabled="
-            << (candidate.enabled ? "true" : "false")
+            << "' name='" << candidate.name
+            << "' enabled=" << (candidate.enabled ? "true" : "false")
             << " host_mappings='" << candidate.host_mappings
             << "' persist_state=" << PersistStateToString(persist_state_);
 
-  // `enabled` is reported separately because it is a selection-layer change with
-  // no network effect, while a host-mapping change has one. A listener that
-  // re-applies network configuration must be able to skip the former.
+  // `enabled` is reported separately because it is a selection-layer change
+  // with no network effect, while a host-mapping change has one. A listener
+  // that re-applies network configuration must be able to skip the former.
   const bool enabled_changed = previous.enabled != candidate.enabled;
   const bool only_enabled_changed =
       enabled_changed && previous.name == candidate.name &&
       previous.color == candidate.color && previous.icon == candidate.icon &&
-      previous.host_mappings == candidate.host_mappings;
+      previous.host_mappings == candidate.host_mappings &&
+      previous.host_mapping_format == candidate.host_mapping_format;
   NotifyObservers(only_enabled_changed ? EnvironmentChangeKind::kEnabledChanged
                                        : EnvironmentChangeKind::kUpdated,
                   candidate.id);
@@ -653,70 +765,87 @@ StoreResult EnvironmentStore::SetEnabled(std::string_view id,
 
 StoreResult EnvironmentStore::SetPersonalHostMappings(
     std::string_view host_mappings,
+    HostMappingFormat format,
     std::string* error) {
   if (read_only_ || (profile_ && profile_->IsOffTheRecord())) {
-    if (error)
-      *error = read_only_ ? "the stored configuration was written by a newer build"
-                          : "environment definitions cannot be changed from an "
-                            "incognito window";
+    if (error) {
+      *error = read_only_
+                   ? "the stored configuration was written by a newer build"
+                   : "environment definitions cannot be changed from an "
+                     "incognito window";
+    }
     return StoreResult::kReadOnly;
   }
 
   std::string validation_error;
-  if (!ValidateHostMappings(host_mappings, &validation_error)) {
-    if (error)
+  if (!ValidateHostMappings(format, host_mappings, &validation_error)) {
+    if (error) {
       *error = validation_error;
+    }
     return StoreResult::kInvalidHostMapping;
   }
 
   PrefService* prefs = profile_ ? profile_->GetPrefs() : nullptr;
   if (!prefs) {
-    if (error)
+    if (error) {
       *error = "no PrefService";
+    }
     return StoreResult::kPersistFailed;
   }
 
+  const Environment current_personal = PersonalEnvironment();
+  const bool mapping_changed =
+      current_personal.host_mappings != host_mappings ||
+      current_personal.host_mapping_format != format;
   prefs->SetString(::prefs::kParraPersonalHostMappings,
                    std::string(host_mappings));
+  prefs->SetString(::prefs::kParraPersonalHostMappingFormat,
+                   HostMappingFormatToString(format));
   persist_state_ = PersistState::kMemoryUpdated;
+  if (mapping_changed) {
+    ++personal_host_mapping_revision_;
+  }
 
-  LOG(INFO) << "parra-store: personal host_mappings set to '"
-            << host_mappings
+  LOG(INFO) << "parra-store: personal host_mappings updated in format='"
+            << HostMappingFormatToString(format)
             << "' persist_state=" << PersistStateToString(persist_state_);
-  NotifyObservers(EnvironmentChangeKind::kUpdated, std::string(kDefaultEnvironmentId));
+  NotifyObservers(EnvironmentChangeKind::kUpdated,
+                  std::string(kDefaultEnvironmentId));
   return StoreResult::kOk;
 }
 
 StoreResult EnvironmentStore::Delete(std::string_view id, std::string* error) {
   if (read_only_ || (profile_ && profile_->IsOffTheRecord())) {
-    if (error)
+    if (error) {
       *error = read_only_
                    ? "the stored configuration was written by a newer build"
                    : "environment definitions cannot be changed from an "
                      "incognito window (the change would be discarded when the "
                      "window closes)";
+    }
     return StoreResult::kReadOnly;
   }
   if (id == kDefaultEnvironmentId) {
-    if (error)
+    if (error) {
       *error = "'personal' cannot be deleted";
+    }
     return StoreResult::kReservedId;
   }
 
-  auto it = std::find_if(environments_.begin(), environments_.end(),
-                         [id](const Environment& environment) {
-                           return environment.id == id;
-                         });
+  auto it = std::find_if(
+      environments_.begin(), environments_.end(),
+      [id](const Environment& environment) { return environment.id == id; });
   if (it == environments_.end()) {
-    if (error)
+    if (error) {
       *error = "no environment with id '" + std::string(id) + "'";
+    }
     return StoreResult::kNotFound;
   }
 
   // This build implements ONLY the conservative mode from docs/parra/53 §3:
-  // refuse while any tab may still be using the environment, because there is no
-  // invalidated-environment UI to fall back on and "delete the definition, leave
-  // the tabs alive" would leave pages the user cannot explain.
+  // refuse while any tab may still be using the environment, because there is
+  // no invalidated-environment UI to fall back on and "delete the definition,
+  // leave the tabs alive" would leave pages the user cannot explain.
   //
   // The tab check is not done here: the store has no view of any tab strip, and
   // giving it one would make a Profile-scoped service depend on window state.
@@ -724,8 +853,8 @@ StoreResult EnvironmentStore::Delete(std::string_view id, std::string* error) {
   // when it is satisfied. Delete() therefore documents the precondition rather
   // than guessing at it.
   //
-  // NO PARTITION IS TOUCHED. Clearing storage is a separate operation and is NOT
-  // implemented in P3.2.
+  // NO PARTITION IS TOUCHED. Clearing storage is a separate operation and is
+  // NOT implemented in P3.2.
   const Environment removed = *it;
   environments_.erase(it);
 
@@ -753,16 +882,18 @@ StoreResult EnvironmentStore::PersistNow(std::string* error) {
   PrefService* prefs = profile_ ? profile_->GetPrefs() : nullptr;
   if (!prefs) {
     persist_state_ = PersistState::kPersistFailed;
-    if (error)
+    if (error) {
       *error = "no PrefService";
+    }
     return StoreResult::kPersistFailed;
   }
 
   const std::string blob = SerializeEnvironments(environments_);
   if (blob.empty() && !environments_.empty()) {
     persist_state_ = PersistState::kPersistFailed;
-    if (error)
+    if (error) {
       *error = "serialisation failed";
+    }
     return StoreResult::kPersistFailed;
   }
 
@@ -772,8 +903,8 @@ StoreResult EnvironmentStore::PersistNow(std::string* error) {
   // sequence. There is NO completion callback. So this assignment must never be
   // reported as "persisted".
   //
-  // The state is therefore kMemoryUpdated here, and only FlushForTesting() (which
-  // uses CommitPendingWrite's reply) can promote it to kPersisted.
+  // The state is therefore kMemoryUpdated here, and only FlushForTesting()
+  // (which uses CommitPendingWrite's reply) can promote it to kPersisted.
   prefs->SetString(::prefs::kParraEnvironments, blob);
   persist_state_ = PersistState::kMemoryUpdated;
 
@@ -787,8 +918,9 @@ void EnvironmentStore::FlushForTesting(base::OnceClosure done) {
   PrefService* prefs = profile_ ? profile_->GetPrefs() : nullptr;
   if (!prefs) {
     persist_state_ = PersistState::kPersistFailed;
-    if (done)
+    if (done) {
       std::move(done).Run();
+    }
     return;
   }
 
@@ -796,17 +928,17 @@ void EnvironmentStore::FlushForTesting(base::OnceClosure done) {
   // the file task runner has run the write task. That is the earliest moment at
   // which "the bytes were handed to the OS" is a true statement -- still not an
   // fsync, which is why the state is called kPersisted and not kSynced.
-  prefs->CommitPendingWrite(
-      base::BindOnce(
-          [](base::WeakPtr<EnvironmentStore> self, base::OnceClosure done) {
-            if (self) {
-              self->persist_state_ = PersistState::kPersisted;
-              LOG(INFO) << "parra-store: commit reply received; persisted";
-            }
-            if (done)
-              std::move(done).Run();
-          },
-          weak_factory_.GetWeakPtr(), std::move(done)));
+  prefs->CommitPendingWrite(base::BindOnce(
+      [](base::WeakPtr<EnvironmentStore> self, base::OnceClosure done) {
+        if (self) {
+          self->persist_state_ = PersistState::kPersisted;
+          LOG(INFO) << "parra-store: commit reply received; persisted";
+        }
+        if (done) {
+          std::move(done).Run();
+        }
+      },
+      weak_factory_.GetWeakPtr(), std::move(done)));
 }
 
 // ---------------------------------------------------------------------------

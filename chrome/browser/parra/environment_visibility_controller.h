@@ -19,10 +19,14 @@ namespace parra {
 
 // Observer for "the active environment changed".
 //
-// The tab strip view implements this so it can drop its cached layout and
-// re-apply the filter. Kept as an explicit callback rather than making the tab
-// strip observe the TabStripModel, because an environment switch does not change
-// the model at all -- there is no model event to observe.
+// SUPERSEDED BY WindowEnvironmentState::AddActiveEnvironmentChangedCallback().
+//
+// Kept so existing self-tests and the visibility PoC keep compiling, but it is
+// no longer the mechanism the product uses, and it is not what a new caller
+// should register: the controller that owns this pointer is a short-lived value
+// object (EnvironmentTabOperations constructs one per operation), so an
+// observer registered here would be forgotten the moment that particular
+// controller died. See window_environment_state.h for the lifetime argument.
 class EnvironmentFilterObserver {
  public:
   virtual ~EnvironmentFilterObserver() = default;
@@ -44,9 +48,9 @@ class EnvironmentFilterObserver {
 //   explicitly documents that the previously hosted WebContents keeps receiving
 //   updates while detached from the hierarchy.
 //
-// So "hiding an environment" is exactly "make its tabs non-active in the strip",
-// which is what TabStripModel already does for background tabs. There is no
-// separate visibility flag to invent, and no WasHidden() to call by hand.
+// So "hiding an environment" is exactly "make its tabs non-active in the
+// strip", which is what TabStripModel already does for background tabs. There
+// is no separate visibility flag to invent, and no WasHidden() to call by hand.
 //
 // Deliberate non-goals:
 //   * Never calls DetachTabAtForInsertion().
@@ -58,8 +62,8 @@ class EnvironmentVisibilityController {
   explicit EnvironmentVisibilityController(TabStripModel* model);
   EnvironmentVisibilityController(const EnvironmentVisibilityController&) =
       delete;
-  EnvironmentVisibilityController& operator=(const EnvironmentVisibilityController&) =
-      delete;
+  EnvironmentVisibilityController& operator=(
+      const EnvironmentVisibilityController&) = delete;
   ~EnvironmentVisibilityController();
 
   const EnvironmentIndexMapper& mapper() const { return mapper_; }

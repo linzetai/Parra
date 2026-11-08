@@ -41,9 +41,12 @@
 #include "chrome/browser/after_startup_task_utils.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/buildflags.h"
-#include "chrome/browser/prefs/session_startup_pref.h"
+#include "chrome/browser/parra/environment.h"
+#include "chrome/browser/parra/environment_index_mapper.h"
 #include "chrome/browser/parra/environment_session_persistence.h"
+#include "chrome/browser/parra/parra_storage_partition_util.h"
 #include "chrome/browser/parra/window_environment_state.h"
+#include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/profiles/profile.h"
@@ -93,6 +96,7 @@
 #include "chrome/common/extensions/extension_metrics.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/common/webui_url_constants.h"
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/keep_alive_registry/scoped_keep_alive.h"
 #include "components/prefs/pref_service.h"
@@ -501,9 +505,10 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
           tab.user_agent_override, tab.extra_data,
           true /* from_session_restore */, std::nullopt);
 
-      // Parra: AddRestoredTab() returns null when the tab's recorded environment
-      // no longer exists; restoring it on the default partition would leak
-      // Personal's cookies to that URL, so it is dropped deliberately.
+      // Parra: AddRestoredTab() returns null when the tab's recorded
+      // environment no longer exists; restoring it on the default partition
+      // would leak Personal's cookies to that URL, so it is dropped
+      // deliberately.
       //
       // The null check is essential. Upstream never returns null here, so the
       // very next line dereferences `web_contents` unguarded -- without this
@@ -515,8 +520,9 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
       // because one environment is gone would be a much worse outcome than
       // dropping the tabs that cannot be placed safely.
       if (!web_contents) {
-        LOG(ERROR) << "parra-restore: skipping a foreign tab; its environment is "
-                      "missing.";
+        LOG(ERROR)
+            << "parra-restore: skipping a foreign tab; its environment is "
+               "missing.";
         return nullptr;
       }
 
@@ -945,10 +951,10 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
 
       // Parra: restore this window's active environment.
       //
-      // Done for BOTH the newly created window and the reused one. The reused case
-      // is the common "continue where you left off" path, where no new window is
-      // created at all, so restoring only in CreateRestoredBrowser() would silently
-      // do nothing.
+      // Done for BOTH the newly created window and the reused one. The reused
+      // case is the common "continue where you left off" path, where no new
+      // window is created at all, so restoring only in CreateRestoredBrowser()
+      // would silently do nothing.
       //
       // This restores the WINDOW's SELECTION only. It never touches a tab's
       // environment: a window may fall back to Personal when its recorded
@@ -1101,6 +1107,37 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
           new_group_ids,
       bool& did_show_browser) {
     DVLOG(1) << "RestoreTabsToBrowser " << window.tabs.size();
+
+    // Parra: hold the window's restored environment for the whole restore of
+    // THIS window, and guarantee it is released however the restore ends.
+    //
+    // WHY A SCOPED OBJECT AND NOT A PAIR OF CALLS
+    //
+    // The previous version called Begin in RestoreWindowActiveEnvironment() and
+    // End in ShowBrowser(). Those two are not in the same scope: ShowBrowser()
+    // runs from inside RestoreTab() for the single tab with is_selected_tab ==
+    // true. A window whose restore never reaches that call -- every tab lost
+    // its navigations, every tab's environment was deleted, or the session
+    // names no selected tab -- began the suppression and never ended it. The
+    // depth counter then stayed at 1 forever and the window stopped adopting
+    // environments entirely: clicking another environment's tab would leave the
+    // strip and the content area disagreeing, the exact failure the adopt step
+    // exists to prevent, and one that would only appear after a restart.
+    //
+    // RAII makes the pairing structural: the guard is constructed here,
+    // destructed on every return path (including the early returns inside the
+    // tab loop), and there is no code path that can skip it.
+    parra::WindowEnvironmentState* parra_state =
+        parra::WindowEnvironmentState::GetFor(browser);
+    std::optional<parra::WindowEnvironmentState::ScopedAdoptionSuppression>
+        parra_suppression;
+    if (parra_state) {
+      parra_suppression.emplace(parra_state);
+      LOG(INFO) << "parra-restore: holding environment '"
+                << parra_state->active_environment()
+                << "' for this window's restore pass";
+    }
+
     // TODO(crbug.com/40662817): Change to DCHECK once we understand
     // why some browsers don't have an active tab on startup.
     CHECK(!window.tabs.empty());
@@ -1154,6 +1191,29 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
                  last_active_time_ticks, tab.last_active_time,
                  did_show_browser);
     }
+
+    // The selected session entry may be a Parra Browser-level management tab,
+    // which Preview intentionally refuses to restore as an ordinary Personal
+    // page. A deleted environment's selected tab can be refused as well. In
+    // either case no RestoreTab() call shows a newly created browser. Select a
+    // surviving tab, or create a fresh ordinary NTP if none survived, before
+    // the caller checks that the restored window is visible.
+    if (browser != browser_ && !did_show_browser) {
+      TabStripModel* model = browser->GetTabStripModel();
+      if (model->count() == 0) {
+        if (!chrome::AddSelectedTabWithURL(browser,
+                                           GURL(chrome::kChromeUINewTabURL),
+                                           ui::PAGE_TRANSITION_AUTO_TOPLEVEL)) {
+          LOG(ERROR) << "parra-restore: could not create fallback new tab";
+        }
+      }
+      if (model->count() > 0) {
+        did_show_browser = true;
+        ShowBrowser(browser, std::max(0, model->active_index()));
+      }
+    }
+
+    EnsureRestoredSelectionMatchesEnvironment(browser);
 
     for (const auto& pair : tabs_by_split_id) {
       const split_tabs::SplitTabId split_id = pair.first;
@@ -1234,15 +1294,27 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
 
     // Parra: AddRestoredTab() returns null when the tab's environment no longer
     // exists (see browser_tabrestore.cc). Upstream assumes it can never be null
-    // here, and only a DCHECK guards it -- which is a no-op in release builds, so
-    // the very next line would dereference null and crash startup.
+    // here, and only a DCHECK guards it -- which is a no-op in release builds,
+    // so the very next line would dereference null and crash startup.
     //
     // Returning here skips only THIS tab; the caller loops over the rest of the
-    // window's tabs, so every other environment still gets restored. One deleted
-    // environment must not cost the user the rest of their session.
+    // window's tabs, so every other environment still gets restored. One
+    // deleted environment must not cost the user the rest of their session.
+    //
+    // NOTE: this early return does NOT cause the `did_show_browser` DCHECK seen
+    // with
+    // --restore-last-session. Measured: both tabs bound successfully (the two
+    // "tab bound to environment" lines above appear in the same run), so
+    // nothing was skipped, and the assertion still fired. The real cause is
+    // that no tab had is_selected_tab == true, which happens when
+    // initial_tab_count != 0 -- the existing browser already had tabs, so the
+    // restored window adds only background ones. That is pre-existing
+    // upstream/launcher behaviour, recorded in docs/parra/95, and is not
+    // something this fix should paper over by forcing a show.
     if (!web_contents) {
-      LOG(ERROR) << "parra-restore: skipping a tab whose environment is missing; "
-                    "the remaining tabs continue to restore.";
+      LOG(ERROR)
+          << "parra-restore: skipping a tab whose environment is missing; "
+             "the remaining tabs continue to restore.";
       return;
     }
 
@@ -1459,65 +1531,156 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
 
   // Parra: restore a window's active environment from its recorded extra_data.
   //
-  // Called from the CALLER of CreateRestoredBrowser (not from inside it) because a
-  // session can restore into an EXISTING browser instead of creating one --
-  // ShouldRestoreToExistingBrowser() returns true for the first normal window in
-  // the common "continue where you left off" case. Putting this inside
-  // CreateRestoredBrowser() covered only the new-window path and silently did
-  // nothing in the far more common existing-window path.
+  // Called from the CALLER of CreateRestoredBrowser (not from inside it)
+  // because a session can restore into an EXISTING browser instead of creating
+  // one -- ShouldRestoreToExistingBrowser() returns true for the first normal
+  // window in the common "continue where you left off" case. Putting this
+  // inside CreateRestoredBrowser() covered only the new-window path and
+  // silently did nothing in the far more common existing-window path.
   static void RestoreWindowActiveEnvironment(
       BrowserWindowInterface* window,
       const std::map<std::string, std::string>& window_extra_data) {
-    if (!window)
+    if (!window) {
       return;
+    }
 
-    const std::string recorded =
-        parra::EnvironmentSessionPersistence::
-            GetRecordedActiveEnvironmentFromExtraData(window_extra_data);
-    if (recorded.empty())
+    const std::string recorded = parra::EnvironmentSessionPersistence::
+        GetRecordedActiveEnvironmentFromExtraData(window_extra_data);
+    if (recorded.empty()) {
       return;
+    }
 
     // LOOKUP ONLY. This window's state was created by
-    // BrowserTabStripController::InitFromModel() while the BrowserView was being
-    // constructed, which happens inside Browser::Init() -- i.e. strictly before any
-    // session restore runs. So it normally exists here.
+    // BrowserTabStripController::InitFromModel() while the BrowserView was
+    // being constructed, which happens inside Browser::Init() -- i.e. strictly
+    // before any session restore runs. So it normally exists here.
     //
     // Not created here on purpose: this function has no destruction hook, so an
-    // object created here would have to be parked in some process-wide container,
-    // outliving the window it points at (its `window_` is a raw_ptr). That was the
-    // P3.3 version and it leaked one object per restored window; see docs/parra/64.
+    // object created here would have to be parked in some process-wide
+    // container, outliving the window it points at (its `window_` is a
+    // raw_ptr). That was the P3.3 version and it leaked one object per restored
+    // window; see docs/parra/64.
     parra::WindowEnvironmentState* state =
         parra::WindowEnvironmentState::GetFor(window);
     if (!state) {
-      // Only reachable if a window was built through a path that does not create a
-      // BrowserView (or Parra was compiled out of that path). Reporting the loss is
-      // right; inventing a state object is not.
+      // Only reachable if a window was built through a path that does not
+      // create a BrowserView (or Parra was compiled out of that path).
+      // Reporting the loss is right; inventing a state object is not.
       //
-      // Note what is NOT affected: no tab's environment is touched by this. Every
-      // tab was already bound to its own partition by browser_tabrestore.cc before
-      // this ran, so a missing window-level state costs the window's SELECTION only.
+      // Note what is NOT affected: no tab's environment is touched by this.
+      // Every tab was already bound to its own partition by
+      // browser_tabrestore.cc before this ran, so a missing window-level state
+      // costs the window's SELECTION only.
       LOG(ERROR) << "parra-restore: no window environment state; the recorded"
                  << " active environment '" << recorded
                  << "' is not restored. No tab's environment is affected.";
       return;
     }
 
-    if (state->SetActiveEnvironment(recorded)) {
-      LOG(INFO) << "parra-restore: window active environment restored to '"
-                << recorded << "'";
-    } else {
-      LOG(INFO) << "parra-restore: window was already on '" << recorded
-                << "'; no change needed";
+    const parra::PartitionResolution resolution =
+        parra::ResolvePartitionForEnvironment(window->GetProfile(), recorded);
+    const std::string active_environment =
+        resolution.ok() ? recorded : parra::kDefaultEnvironmentId;
+    if (!resolution.ok()) {
+      LOG(WARNING) << "parra-restore: recorded active environment '" << recorded
+                   << "' is unavailable (" << resolution.failure
+                   << "); falling back to '" << active_environment << "'";
     }
+
+    if (state->SetActiveEnvironment(active_environment)) {
+      LOG(INFO) << "parra-restore: window active environment restored to '"
+                << active_environment << "'";
+      // NOTE: the adoption-suppression begin/end pair is NOT managed here.
+      //
+      // This function only decides WHICH environment the window is on; it
+      // cannot see when the restore for this window finishes. Managing the pair
+      // here was the bug fixed in M1.1/A2: Begin ran unconditionally, while the
+      // matching End lived in ShowBrowser(), which is called from exactly ONE
+      // place -- the single tab whose is_selected_tab is true. Any window that
+      // finishes restoring without reaching that call leaked the suppression
+      // permanently, and from then on the window stopped adopting environments
+      // when the user clicked another environment's tab.
+      //
+      // The pair is now owned by RestoreTabsToBrowser(), which is the function
+      // whose scope actually equals "the restore of this window".
+    } else {
+      LOG(INFO) << "parra-restore: window was already on '"
+                << active_environment << "'; no change needed";
+    }
+  }
+
+  // RestoreTab() may call ShowBrowser() before later tabs in this session
+  // window have been added. Reconcile only after the whole pass so we do not
+  // mistake a not-yet-restored environment tab for an empty environment.
+  void EnsureRestoredSelectionMatchesEnvironment(
+      BrowserWindowInterface* browser) {
+    if (!browser) {
+      return;
+    }
+
+    TabStripModel* model = browser->GetTabStripModel();
+    parra::WindowEnvironmentState* state =
+        parra::WindowEnvironmentState::GetFor(browser);
+    if (!model || !state || model->count() == 0) {
+      return;
+    }
+
+    const std::string& environment_id = state->active_environment();
+    const int active_index = model->active_index();
+    parra::EnvironmentIndexMapper mapper(model);
+    if (model->ContainsIndex(active_index) &&
+        mapper.IsTabVisible(environment_id, active_index)) {
+      return;
+    }
+
+    std::optional<int> target = mapper.GetActiveGlobalIndexFor(environment_id);
+    if (!target) {
+      // A valid environment can have no session tabs if its pages were closed
+      // or could not be restored. Open its normal new-tab page rather than
+      // activating a tab from another environment while leaving the window
+      // state unchanged.
+      content::WebContents* new_tab = chrome::AddAndReturnTabAt(
+          browser, GURL(chrome::kChromeUINewTabURL), /*index=*/-1,
+          /*foreground=*/false, std::nullopt, /*pinned=*/false, std::nullopt,
+          environment_id);
+      if (new_tab) {
+        target = model->GetIndexOfWebContents(new_tab);
+      }
+    }
+
+    if (!target) {
+      LOG(ERROR)
+          << "parra-restore: could not select or create a tab for active "
+             "environment '"
+          << environment_id << "'";
+      return;
+    }
+
+    LOG(INFO) << "parra-restore: selecting tab g" << *target
+              << " for active environment '" << environment_id << "'";
+    model->ActivateTabAt(*target,
+                         TabStripUserGestureDetails(
+                             TabStripUserGestureDetails::GestureType::kOther));
   }
 
   void ShowBrowser(BrowserWindowInterface* browser, int selected_tab_index) {
     DCHECK(browser);
     DCHECK(browser->GetTabStripModel()->count());
+
     browser->GetTabStripModel()->ActivateTabAt(
         selected_tab_index,
         TabStripUserGestureDetails(
             TabStripUserGestureDetails::GestureType::kOther));
+
+    // The adoption suppression is NOT released here any more.
+    //
+    // It used to be, and that was the leak: this function is only reached for
+    // the tab whose is_selected_tab is true, so a window that never restored
+    // such a tab kept the suppression forever. The release now belongs to the
+    // guard in RestoreTabsToBrowser(), whose scope is exactly "this window's
+    // restore pass" and which cannot be skipped. Releasing here as well would
+    // be harmless (the counter floors at zero) but would obscure where the pair
+    // is owned.
 
     if (browser_ == browser) {
       return;

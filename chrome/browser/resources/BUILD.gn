@@ -23,6 +23,14 @@ group("resources") {
     "contextual_tasks:resources",
     "glic:resources",
     "glic/experimental_opt_in:resources",
+    # Parra: chrome://parra environment management page.
+    #
+    # This is the `resources` group that chrome_paks() lists as a dependency, so the
+    # entry here is what makes the build actually produce parra_resources.pak. The
+    # pak still has to be named in chrome/chrome_paks.gni to be REPACKED into
+    # resources.pak; both halves are needed and each produces the same silent runtime
+    # failure on its own (see the comment in chrome_paks.gni).
+    "parra:resources",
     "saved_tab_groups_unsupported:resources",
     "segmentation_internals:resources",
     "//components/enterprise/connectors/resources",

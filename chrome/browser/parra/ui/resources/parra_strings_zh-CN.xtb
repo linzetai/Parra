@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE translationbundle>
+<translationbundle lang="zh-CN">
+  <translation id="1751249301761991853">个人环境</translation>
+  <translation id="4091666504364914515">Parra 未正常关闭。</translation>
+  <translation id="7603443255906964675">切换环境</translation>
+  <translation id="466494964433198184">当前环境：<ph name="ENVIRONMENT" /></translation>
+  <translation id="4141777965668837875">已切换至 <ph name="ENVIRONMENT" /></translation>
+  <translation id="8800067484009320249">切换环境 · 当前窗口</translation>
+  <translation id="3064471324809187187">管理环境…</translation>
+  <translation id="121552062443395463">{COUNT,plural, =0{无标签页}=1{1 个标签页}other{# 个标签页}}</translation>
+  <translation id="8877407672164247744">（已停用）</translation>
+  <translation id="5103432051079705606">切换失败，当前环境未改变。</translation>
+  <translation id="4989026476340339031">该环境已停用，启用后才能切换。</translation>
+  <translation id="3541714111892000372">Parra 新标签页</translation>
+  <translation id="208879724577867137">Parra 标志</translation>
+  <translation id="2711295220312083327">轻松切换，专注当前空间</translation>
+  <translation id="1711332449133587919">当前浏览空间</translation>
+  <translation id="8120079226319624457">常用网站</translation>
+  <translation id="4951172117477481352">在此环境中继续浏览</translation>
+</translationbundle>

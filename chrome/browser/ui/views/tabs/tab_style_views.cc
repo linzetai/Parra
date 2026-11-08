@@ -16,6 +16,10 @@
 #include "chrome/browser/ui/views/tabs/common/horizontal_tab_style_views.h"
 #include "chrome/browser/ui/views/tabs/common/vertical_tab_style_views.h"
 #include "ui/gfx/color_utils.h"
+#include "ui/views/view_class_properties.h"
+
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(views::CascadingProperty<SkColor>,
+                                   kParraEnvironmentTabColor)
 
 // static
 std::u16string ui::metadata::TypeConverter<TabStyle::TabColors>::ToString(

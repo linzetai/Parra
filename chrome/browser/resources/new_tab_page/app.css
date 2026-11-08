@@ -571,3 +571,98 @@ ntp-lens-upload-dialog {
   position: relative;
   z-index: 1;
 }
+
+#parraHome {
+  box-sizing: border-box;
+  color: var(--color-new-tab-page-most-visited-foreground);
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  margin: clamp(68px, 12vh, 130px) auto 24px;
+  width: min(calc(100% - 48px), 736px);
+}
+
+#parraBrandRow {
+  align-items: center;
+  border-bottom: 1px solid var(--color-new-tab-page-most-visited-tile-background);
+  display: flex;
+  gap: 14px;
+  min-height: 72px;
+  padding-bottom: 20px;
+}
+
+#parraBrandMark {
+  flex: none;
+  height: 48px;
+  width: 48px;
+}
+
+#parraBrandName {
+  font-size: 34px;
+  font-weight: 650;
+  letter-spacing: -.04em;
+  line-height: 1;
+}
+
+#parraHomeSubtitle {
+  color: var(--color-new-tab-page-secondary-foreground);
+  font-size: 12px;
+  margin-left: auto;
+}
+
+#parraEnvironmentIdentity {
+  border-left: 4px solid transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 48px;
+  padding-left: 16px;
+}
+
+#parraEnvironmentIdentity strong {
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#parraEnvironmentIdentity span {
+  color: var(--color-new-tab-page-secondary-foreground);
+  font-size: 12px;
+}
+
+#rhsContent:has(> #parraHome) {
+  --ntp-search-box-width: min(calc(100vw - 48px), 736px);
+}
+
+#parraHome ~ #searchboxContainer {
+  margin-bottom: 36px;
+}
+
+#parraShortcutsHeader {
+  align-items: center;
+  color: var(--color-new-tab-page-most-visited-foreground);
+  display: flex;
+  font-size: 13px;
+  justify-content: space-between;
+  margin: 0 auto 10px;
+  width: min(calc(100% - 48px), 736px);
+}
+
+#parraShortcutsHeader span {
+  color: var(--color-new-tab-page-secondary-foreground);
+  font-size: 12px;
+}
+
+@media (max-height: 660px) {
+  #parraHome { margin-top: 20px; }
+}
+
+@media (max-width: 560px) {
+  #parraHomeSubtitle,
+  #parraShortcutsHeader span { display: none; }
+  #parraHome { gap: 20px; }
+  #parraBrandName { font-size: 30px; }
+}

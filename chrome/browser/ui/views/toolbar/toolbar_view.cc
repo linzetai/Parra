@@ -245,7 +245,7 @@ bool IsPositionInWindowCaptionForView(const views::View* view,
     // The point hit an interactive control (button, location bar, etc.).
     return false;
   }
-  // The point is not in any child's bounds — it's in empty space between
+  // The point is not in any child's bounds 闂?it's in empty space between
   // children, padding, or above/below a child. In VTS mode the toolbar is
   // at the very top of the window, so all non-interactive areas should be
   // draggable regardless of vertical position.
@@ -474,6 +474,8 @@ void ToolbarView::Init() {
     contextual_tasks_button_ = AddChildViewAt(std::move(button), 0);
   }
 
+  // Parra: the environment switcher.
+  //
   if (location_bar_view) {
     location_bar_view_ = AddChildView(std::move(location_bar_view));
     location_bar_ = location_bar_view_;

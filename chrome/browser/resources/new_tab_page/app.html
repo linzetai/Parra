@@ -12,7 +12,8 @@ import {SubmitButtonIconType} from '//resources/cr_components/composebox/compose
       ${this.lazyRender_ && this.microsoftModuleEnabled_ ? html`
         <iframe id="microsoftAuth" src="${this.microsoftAuthIframePath_}"></iframe>
       ` : ''}
-      ${this.lazyRender_ && this.oneGoogleBarEnabled_ ? html`
+      ${this.lazyRender_ && this.oneGoogleBarEnabled_ &&
+          !this.parraEnvironmentLabel_ ? html`
         ${this.ntpRealboxNextEnabled_ ? html`
           <div id="oneGoogleBarStackingContext">
             <div id="oneGoogleBarScrim" ?hidden="${!this.showBackgroundImage_}"
@@ -34,8 +35,22 @@ import {SubmitButtonIconType} from '//resources/cr_components/composebox/compose
           StartupBrowserCreatorPickerNoParamsTest.ShowPickerWhenAlreadyLaunched on
           the msan builder. See crbug.com/40743659. -->
       <ntp-logo id="logo" ?single-colored="${this.singleColoredLogo_}"
-          .theme="${this.theme_}" ?hidden="${!this.logoEnabled_}">
+          .theme="${this.theme_}"
+          ?hidden="${!this.logoEnabled_ || !!this.parraEnvironmentLabel_}">
       </ntp-logo>
+      ${this.parraEnvironmentLabel_ ? html`
+        <section id="parraHome" aria-label="$i18n{parraNtpAriaLabel}">
+          <div id="parraBrandRow">
+            <img id="parraBrandMark" src="parra-logo.png" alt="$i18n{parraNtpLogoAlt}">
+            <strong id="parraBrandName">Parra</strong>
+            <span id="parraHomeSubtitle">$i18n{parraNtpSubtitle}</span>
+          </div>
+          <div id="parraEnvironmentIdentity"
+              style="border-left-color: ${this.getParraVisibleAccent_()}">
+            <strong>${this.parraEnvironmentLabel_}</strong>
+            <span>$i18n{parraCurrentSpace}</span>
+          </div>
+        </section>` : ''}
       ${this.ntpRealboxNextEnabled_ ? html`
         <div id="scrim"
             @click="${this.onScrimClick_}"
@@ -45,20 +60,20 @@ import {SubmitButtonIconType} from '//resources/cr_components/composebox/compose
           @focusin="${this.onSearchboxContainerFocusin_}"
           @focusout="${this.onSearchboxContainerFocusout_}">
         <ntp-searchbox id="searchbox" ?is-dark="${this.isThemeDark_()}"
+            ?parra-workspace="${!!this.parraEnvironmentLabel_}"
             placeholder-text="$i18n{searchBoxPlaceholder}"
             ?color-source-is-baseline="${this.colorSourceIsBaseline}"
             @open-composebox="${this.onOpenComposebox_}"
             @open-lens-search="${this.onOpenLensSearch_}"
             @open-voice-search="${this.onOpenVoiceSearch_}" ?shown="${this.realboxShown_}"
             @context-menu-entrypoint-click="${this.onContextMenuEntrypointClick_}"
-            ?can-show-secondary-side="${this.realboxCanShowSecondarySide}"
-            ?compose-button-enabled="${this.composeButtonEnabled}"
-            ?composebox-enabled="${this.composeboxEnabled}"
+            ?can-show-secondary-side="${this.realboxCanShowSecondarySide && !this.parraEnvironmentLabel_}"
+            ?compose-button-enabled="${this.composeButtonEnabled && !this.parraEnvironmentLabel_}"
+            ?composebox-enabled="${this.composeboxEnabled && !this.parraEnvironmentLabel_}"
             .hasVoiceSearchError="${this.hasVoiceSearchError}"
             searchbox-layout-mode="${this.ntpRealboxNextEnabled_ ? 'Compact' : ''}"
             .inVoiceSearchMode="${this.showVoiceSearchOverlay_}"
-            ?ntp-realbox-next-enabled="${this.ntpRealboxNextEnabled_}"
-            ?cycling-placeholders="${this.searchboxCyclingPlaceholders_}"
+            ?ntp-realbox-next-enabled="${this.ntpRealboxNextEnabled_ && !this.parraEnvironmentLabel_}"
             context-menu-glif-animation-state="${this.contextMenuGlifAnimationState_}"
             .energyEffectAnimationEnabled="${this.energyEffectAnimationEnabled_}"
             .contextManagementInComposeboxEnabled="${this.contextManagementInComposeboxEnabled_}"
@@ -97,7 +112,8 @@ import {SubmitButtonIconType} from '//resources/cr_components/composebox/compose
         ` : ''}
       </div>
       ${this.lazyRender_ && this.ntpNextFeaturesEnabled_
-      && this.isActionChipsVisible_ && this.composeboxEnabled ? html`
+      && this.isActionChipsVisible_ && this.composeboxEnabled &&
+      !this.parraEnvironmentLabel_ ? html`
         <ntp-action-chips
             ?show-background="${this.showActionChipsBackground_()}"
             @action-chip-click="${this.onActionChipClick_}"
@@ -115,7 +131,12 @@ import {SubmitButtonIconType} from '//resources/cr_components/composebox/compose
       ` : ''}
       ${this.lazyRender_ ? html`
         ${this.shortcutsEnabled_ ? html`
+          ${this.parraEnvironmentLabel_ ? html`
+            <div id="parraShortcutsHeader">
+              <strong>$i18n{parraTopSites}</strong><span>$i18n{parraTopSitesHint}</span>
+            </div>` : ''}
           <cr-most-visited id="mostVisited" .theme="${this.theme_?.mostVisited || null}"
+              ?parra-workspace="${!!this.parraEnvironmentLabel_}"
               single-row reflow-on-overflow
               ?expandable-tiles-enabled="${this.ntpNextFeaturesEnabled_}"
               max-tiles-in-collapsed-state="${this.maxTilesInCollapsedState_}"
@@ -123,7 +144,8 @@ import {SubmitButtonIconType} from '//resources/cr_components/composebox/compose
               max-most-visited-tiles-in-expanded-state="${this.maxMostVisitedTilesInExpandedState_}"
               max-enterprise-shortcuts="${this.maxEnterpriseShortcuts_}"
               ?shortcuts-reorder-enabled="${this.shortcutsReorderEnabled_}"
-              .containerWidth="${this.rhsWidth_}"
+              .containerWidth="${this.parraEnvironmentLabel_ ?
+                  Math.min(this.rhsWidth_ ?? 736, 736) : this.rhsWidth_}"
               @most-visited-auto-removed="${this.onMostVisitedAutoRemoved_}">
           </cr-most-visited>
         ` : ''}
@@ -172,7 +194,7 @@ import {SubmitButtonIconType} from '//resources/cr_components/composebox/compose
                 ?modules-shown-to-user="${this.modulesShownToUser}"
                 ?show-background-image="${this.showBackgroundImage_}"
                 ?show-customize="${this.showCustomize_}"
-                ?show-customize-chrome-text="${this.showCustomizeChromeText_}"
+                ?show-customize-chrome-text="${this.showCustomizeChromeText_ && !this.parraEnvironmentLabel_}"
                 ?show-wallpaper-search="${this.showWallpaperSearch_}"
                 ?show-wallpaper-search-button="${this.showWallpaperSearchButton_}"
                 ?wallpaper-search-button-animation-enabled="${this.wallpaperSearchButtonAnimationEnabled_}"

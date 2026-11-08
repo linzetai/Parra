@@ -32,8 +32,9 @@ int g_failures = 0;
 
 void Report(bool ok, const std::string& test, const std::string& detail) {
   ++g_checks;
-  if (!ok)
+  if (!ok) {
     ++g_failures;
+  }
   LOG(INFO) << "PARRA-P31 " << (ok ? "PASS" : "FAIL") << " " << test << " | "
             << detail;
 }
@@ -43,17 +44,19 @@ std::string Describe(const PartitionResolution& r) {
                        " env='",
                        r.environment_id.empty() ? "<empty>" : r.environment_id,
                        "' ok=", r.ok() ? "true" : "false",
-                       r.failure.empty() ? "" : " failure='",
-                       r.failure, r.failure.empty() ? "" : "'"});
+                       r.failure.empty() ? "" : " failure='", r.failure,
+                       r.failure.empty() ? "" : "'"});
 }
 
-// The environment ids actually configured, so the test asserts about environments
-// that exist instead of hard-coding names the harness might not have created.
+// The environment ids actually configured, so the test asserts about
+// environments that exist instead of hard-coding names the harness might not
+// have created.
 std::vector<std::string> ConfiguredIds() {
   std::vector<std::string> ids;
   EnvironmentRegistry* registry = EnvironmentRegistry::GetInstance();
-  if (!registry->enabled())
+  if (!registry->enabled()) {
     return ids;
+  }
   for (const EnvironmentRegistry::Environment& environment :
        registry->environments()) {
     ids.push_back(environment.id);
@@ -66,13 +69,14 @@ std::vector<std::string> ConfiguredIds() {
 // Every assertion about a dedicated partition must use one of these: `personal`
 // maps to the default StoragePartition by definition, so asking it for a
 // partition_name, a structural id, or a kDedicatedPartition restore answer is a
-// question with no correct answer. Using it would fail for a reason unrelated to
-// the property under test.
+// question with no correct answer. Using it would fail for a reason unrelated
+// to the property under test.
 std::vector<std::string> NonPersonalIds() {
   std::vector<std::string> ids;
   for (std::string& id : ConfiguredIds()) {
-    if (id != kDefaultEnvironmentId)
+    if (id != kDefaultEnvironmentId) {
       ids.push_back(std::move(id));
+    }
   }
   return ids;
 }
@@ -94,7 +98,8 @@ void TestEmptyIdStillAllowed(Profile* profile) {
   // Fail-closed must not spill over into ordinary browsing. A navigation that
   // never mentioned an environment has to succeed, otherwise Parra being
   // configured would break stock Chromium tabs.
-  const PartitionResolution resolved = ResolvePartitionForEnvironment(profile, "");
+  const PartitionResolution resolved =
+      ResolvePartitionForEnvironment(profile, "");
   Report(resolved.ok() && resolved.lookup == EnvironmentLookup::kNotSpecified &&
              resolved.config.is_default(),
          "A2-empty-id-still-default", Describe(resolved));
@@ -128,7 +133,8 @@ void TestNamedEnvironmentResolves(Profile* profile,
       detail += " [" + id + ": " + Describe(resolved) + "]";
     }
   }
-  Report(ok_count == static_cast<int>(ids.size()), "A4-named-environment-resolves",
+  Report(ok_count == static_cast<int>(ids.size()),
+         "A4-named-environment-resolves",
          "resolved=" + std::to_string(ok_count) + "/" +
              std::to_string(ids.size()) + detail);
 }
@@ -161,13 +167,13 @@ void TestStructuralLookupDistinguishesDeletedFromPersonal(
   // completely different code paths (stock tab vs isolated tab).
   const std::string structural_named =
       GetEnvironmentIdFromPartitionConfig(known.config);
-  const std::string structural_default =
-      GetEnvironmentIdFromPartitionConfig(
-          content::StoragePartitionConfig::CreateDefault(profile));
+  const std::string structural_default = GetEnvironmentIdFromPartitionConfig(
+      content::StoragePartitionConfig::CreateDefault(profile));
 
-  Report(structural_named == id && structural_default.empty(),
-         "B1-structural-vs-definition-aware",
-         "named='" + structural_named + "' default='" + structural_default + "'");
+  Report(
+      structural_named == id && structural_default.empty(),
+      "B1-structural-vs-definition-aware",
+      "named='" + structural_named + "' default='" + structural_default + "'");
 }
 
 void TestDefinitionAwareLookupRequiresDefinition(
@@ -191,9 +197,10 @@ void TestDefinitionAwareLookupRequiresDefinition(
   const std::string_view definition_aware =
       GetEnvironmentIdForStoragePartition(orphan);
 
-  // The structural answer names the partition; the definition-aware one refuses.
-  // If these two collapsed into one answer, a page in a deleted environment would
-  // be classified as Personal and could be treated as a stock tab.
+  // The structural answer names the partition; the definition-aware one
+  // refuses. If these two collapsed into one answer, a page in a deleted
+  // environment would be classified as Personal and could be treated as a stock
+  // tab.
   Report(structural == "deleted-environment" && definition_aware.empty(),
          "B2-definition-aware-needs-definition",
          "structural='" + structural + "' definition_aware='" +
@@ -212,11 +219,12 @@ void TestOtrPartitionIsInMemory(Profile* regular_profile,
     return;
   }
 
-  // Create a throwaway OTR profile. It is owned by `regular_profile`, so nothing
-  // leaks and no persistent state is touched: an OTR profile is destroyed with
-  // its parent.
+  // Create a throwaway OTR profile. It is owned by `regular_profile`, so
+  // nothing leaks and no persistent state is touched: an OTR profile is
+  // destroyed with its parent.
   Profile* otr = regular_profile->GetOffTheRecordProfile(
-      Profile::OTRProfileID::CreateUniqueForTesting(), /*create_if_needed=*/true);
+      Profile::OTRProfileID::CreateUniqueForTesting(),
+      /*create_if_needed=*/true);
   if (!otr) {
     Report(false, "C1-otr-partition-in-memory", "could not create OTR profile");
     return;
@@ -242,8 +250,8 @@ void TestOtrPartitionIsInMemory(Profile* regular_profile,
          "persistent=" + std::to_string(persistent) + "/" +
              std::to_string(ids.size()) + detail);
 
-  // The same environment in a REGULAR profile must stay persistent. If this ever
-  // flips, isolation data would silently disappear on restart.
+  // The same environment in a REGULAR profile must stay persistent. If this
+  // ever flips, isolation data would silently disappear on restart.
   const PartitionResolution regular =
       ResolvePartitionForEnvironment(regular_profile, ids.front());
   Report(regular.ok() && !regular.config.in_memory(),
@@ -261,22 +269,24 @@ void TestOtrSharesRoutingWithRegular(Profile* regular_profile,
     return;
   }
   Profile* otr = regular_profile->GetOffTheRecordProfile(
-      Profile::OTRProfileID::CreateUniqueForTesting(), /*create_if_needed=*/true);
+      Profile::OTRProfileID::CreateUniqueForTesting(),
+      /*create_if_needed=*/true);
   if (!otr) {
     Report(false, "C3-otr-shares-host-mapping", "could not create OTR profile");
     return;
   }
 
   // Data isolation is the in_memory flag; routing must NOT differ. If an OTR
-  // window resolved the same hostname differently from a regular one, the same URL
-  // would reach a different backend depending on whether the window is incognito,
-  // which is impossible to diagnose from the page.
+  // window resolved the same hostname differently from a regular one, the same
+  // URL would reach a different backend depending on whether the window is
+  // incognito, which is impossible to diagnose from the page.
   int mismatched = 0;
   std::string detail;
   for (const std::string& id : ids) {
     const PartitionResolution regular =
         ResolvePartitionForEnvironment(regular_profile, id);
-    const PartitionResolution incognito = ResolvePartitionForEnvironment(otr, id);
+    const PartitionResolution incognito =
+        ResolvePartitionForEnvironment(otr, id);
     if (!regular.ok() || !incognito.ok()) {
       detail += " [" + id + ": unresolved]";
       ++mismatched;
@@ -285,7 +295,8 @@ void TestOtrSharesRoutingWithRegular(Profile* regular_profile,
     const base::FilePath regular_path =
         EnvironmentRegistry::GetRelativePartitionPathForConfig(regular.config);
     const base::FilePath otr_path =
-        EnvironmentRegistry::GetRelativePartitionPathForConfig(incognito.config);
+        EnvironmentRegistry::GetRelativePartitionPathForConfig(
+            incognito.config);
     const std::string regular_rules =
         GetHostMappingRulesForPartitionPath(regular_path);
     const std::string otr_rules = GetHostMappingRulesForPartitionPath(otr_path);
@@ -305,21 +316,18 @@ void TestOtrSharesRoutingWithRegular(Profile* regular_profile,
 // ---------------------------------------------------------------------------
 
 void TestEnablementSemantics(Profile* profile) {
-  // IsEnabled() answers "does this build have Parra", HasUserDefinedEnvironments()
-  // answers "does this profile have any non-Personal environment". They must be
-  // independently readable so a profile with no environments does not look like a
-  // build without Parra.
-  const bool process_enabled = IsEnabled();
+  // IsEnabled() answers "does this build have Parra",
+  // HasUserDefinedEnvironments() answers "does this profile have any
+  // non-Personal environment". They must be independently readable so a profile
+  // with no environments does not look like a build without Parra.
+  const bool parra_build_enabled = IsEnabled();
   const bool has_envs = HasUserDefinedEnvironments(profile);
 
-  Report(process_enabled == IsParraPocEnabled(),
-         "D1-compat-alias-matches", "IsEnabled=" +
-                                        std::string(process_enabled ? "true"
-                                                                    : "false"));
+  Report(parra_build_enabled, "D1-parra-build-enabled",
+         "IsEnabled=" + std::string(parra_build_enabled ? "true" : "false"));
 
-  // With the PoC switches present, both must be true. Without them, both false.
-  // Either way, `personal` must still resolve -- that is what keeps a normal
-  // browser working when Parra is off.
+  // `personal` must resolve independently of whether the profile has named
+  // environments; it is the default environment every browser window needs.
   const PartitionResolution personal =
       ResolvePartitionForEnvironment(profile, kDefaultEnvironmentId);
   Report(personal.ok(), "D2-personal-resolves-regardless",
@@ -331,18 +339,18 @@ void TestEnablementSemantics(Profile* profile) {
 // E. Restore resolution
 // ---------------------------------------------------------------------------
 
-void TestRestoreResolution(Profile* profile, const std::vector<std::string>& ids) {
-  // An empty recorded id is a tab that never had an environment: it must restore,
-  // not be refused.
+void TestRestoreResolution(Profile* profile,
+                           const std::vector<std::string>& ids) {
+  // An empty recorded id is a tab that never had an environment: it must
+  // restore, not be refused.
   const ResolvedEnvironment empty = ResolveEnvironmentForRestore(profile, "");
   Report(empty.status == EnvironmentResolution::kDefaultPartition,
-         "E1-restore-empty-id-defaults", "status=" +
-                                             std::to_string(
-                                                 static_cast<int>(empty.status)));
+         "E1-restore-empty-id-defaults",
+         "status=" + std::to_string(static_cast<int>(empty.status)));
 
-  // A recorded id that no longer exists must be REFUSED. This is the fail-closed
-  // contract for session restore and the last line of defence against a deleted
-  // environment's tab silently loading in Personal.
+  // A recorded id that no longer exists must be REFUSED. This is the
+  // fail-closed contract for session restore and the last line of defence
+  // against a deleted environment's tab silently loading in Personal.
   const ResolvedEnvironment missing =
       ResolveEnvironmentForRestore(profile, "deleted-since-last-run");
   Report(missing.status == EnvironmentResolution::kUnknownEnvironment,
@@ -398,8 +406,8 @@ class P31SelfTest {
     TestRestoreResolution(profile_, named_ids);
 
     LOG(INFO) << "PARRA-P31 SUMMARY checks=" << g_checks
-              << " failures=" << g_failures << " result="
-              << (g_failures == 0 ? "ALL-PASS" : "FAILURES");
+              << " failures=" << g_failures
+              << " result=" << (g_failures == 0 ? "ALL-PASS" : "FAILURES");
     LOG(INFO) << "PARRA-P31 EXITING";
 
     if (BrowserWindowInterface* browser =
@@ -428,8 +436,8 @@ void MaybeRunP31SelfTest() {
   }
 
   // Delayed so the visibility PoC has created and committed the 3x3 layout: the
-  // checks ask the resolver about environments that really exist, which requires
-  // the registry to be populated AND the tabs to have committed.
+  // checks ask the resolver about environments that really exist, which
+  // requires the registry to be populated AND the tabs to have committed.
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(

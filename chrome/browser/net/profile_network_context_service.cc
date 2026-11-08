@@ -40,6 +40,7 @@
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/domain_reliability/service_factory.h"
 #include "chrome/browser/parra/parra_storage_partition_util.h"
+#include "chrome/browser/parra/environment_store.h"
 #include "chrome/browser/net/disk_cache_dir_util.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/profiles/profile.h"
@@ -101,6 +102,7 @@
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/cert_verifier_service.mojom.h"
 #include "services/network/public/mojom/network_context.mojom.h"
+#include "services/network/public/cpp/network_switches.h"
 #include "services/network/public/mojom/network_service.mojom.h"
 #include "third_party/blink/public/common/features.h"
 
@@ -1361,7 +1363,40 @@ void ProfileNetworkContextService::ConfigureNetworkContextParamsInternal(
   const std::string parra_host_mapping_rules =
       parra::GetHostMappingRulesForPartitionPath(profile_,
                                                 relative_partition_path);
-  if (!parra_host_mapping_rules.empty()) {
+    parra::EnvironmentStore* parra_store =
+      parra::EnvironmentStore::GetForProfile(profile_);
+    const bool parra_partition =
+      parra_store && parra_store->IsParraPartitionPath(relative_partition_path);
+    uint64_t parra_mapping_revision = 0;
+    if (parra_partition) {
+    parra_mapping_revision =
+      parra_store->GetHostMappingRevisionForPartitionPath(
+        relative_partition_path);
+    network_context_params->parra_host_override_enabled = true;
+    network_context_params->parra_host_override_rules =
+      parra_host_mapping_rules;
+    network_context_params->host_mapping_revision = parra_mapping_revision;
+
+    // Install a scoped layer even for an empty Environment so the first
+    // successful live update can replace it. Preserve legacy command-line
+    // resolver behavior as the initial DNS fallback, but do not give those
+    // global rules Environment DIRECT override priority.
+    std::string initial_resolver_rules = parra_host_mapping_rules;
+    const base::CommandLine& command_line =
+      *base::CommandLine::ForCurrentProcess();
+    if (initial_resolver_rules.empty() &&
+      command_line.HasSwitch(network::switches::kHostResolverRules)) {
+      initial_resolver_rules =
+        command_line.GetSwitchValueASCII(
+          network::switches::kHostResolverRules);
+    } else if (initial_resolver_rules.empty() &&
+           command_line.HasSwitch(network::switches::kHostRules)) {
+      initial_resolver_rules =
+        command_line.GetSwitchValueASCII(network::switches::kHostRules);
+    }
+    network_context_params->host_mapping_rules =
+      std::move(initial_resolver_rules);
+    } else if (!parra_host_mapping_rules.empty()) {
     network_context_params->host_mapping_rules = parra_host_mapping_rules;
   }
   // Diagnostic: record exactly what each partition's NetworkContext received.
@@ -1497,7 +1532,9 @@ void ProfileNetworkContextService::ConfigureNetworkContextParamsInternal(
     network_context_params->hsts_policy_bypass_list.push_back(*string_value);
   }
 
-  proxy_config_monitor_->AddToNetworkContextParams(network_context_params);
+  proxy_config_monitor_->AddToNetworkContextParams(
+      network_context_params, parra_partition, parra_host_mapping_rules,
+      parra_mapping_revision);
 
   network_context_params->enable_certificate_reporting = true;
 

@@ -129,6 +129,16 @@
   "chrome/browser/indigo/resources/indigo_strings.grd": {
     "messages": [2255],
   },
+  # Parra environment switcher strings.
+  #
+  # 2256 rather than a round number: ids in this file are handed out in tens, and
+  # every multiple of ten in this neighbourhood is already taken (2250, 2255,
+  # 2260, 2280, 2300). A grd without an entry here does not merely get unlucky ids
+  # -- grit REFUSES to build it with "add a first id", so this entry is required
+  # for the target to compile at all.
+  "chrome/browser/parra/ui/resources/parra_strings.grd": {
+    "messages": [2256],
+  },
   "chrome/browser/nearby_sharing/internal/nearby_share_internal_icons.grd": {
     "includes": [2260],
   },
@@ -1801,6 +1811,17 @@
   "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/webui_toolbar_shared/resources.grd": {
     "META": {"sizes": {"includes": [100]}},
     "includes": [10140],
+  },
+
+  # Parra: chrome://parra environment management page.
+  #
+  # Slots are carved out of the gap between webui_toolbar_shared (ends at
+  # 10140+100 = 10240) and the THIS_IS_A_PLACEHOLDER entry at 12000, so this allocation
+  # cannot collide with an existing one. 120 slots, not the usual 10: this page ships a
+  # hand-written CSS file plus three TS modules and their generated mojom bindings.
+  "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/parra/resources.grd": {
+    "META": {"sizes": {"includes": [120]}},
+    "includes": [10300],
   },
 
   "<(SHARED_INTERMEDIATE_DIR)/THIS_IS_A_PLACEHOLDER.grd": {

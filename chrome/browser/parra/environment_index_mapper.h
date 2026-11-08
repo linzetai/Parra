@@ -73,9 +73,16 @@ class EnvironmentIndexMapper {
                                         const std::string& environment_id);
 
   // Reads the environment id of `contents` without needing a TabStripModel.
-  // Returns kDefaultEnvironmentId when untagged.
-  static std::string GetEnvironmentForContents(
-      const content::WebContents* contents);
+  //
+  // Prefers the stored tag. When no tag was ever written it falls back to the
+  // StoragePartition the tab's SiteInstance is pinned to, because an untagged
+  // tab is not necessarily Personal: a tab created directly in `parra/<id>`
+  // that never got a tag really does belong to `<id>`, and reporting it as
+  // Personal would put every environment's tabs in one strip.
+  //
+  // Takes a non-const pointer because WebContents::GetSiteInstance() is
+  // non-const in this revision. Every caller already holds a non-const pointer.
+  static std::string GetEnvironmentForContents(content::WebContents* contents);
 
   explicit EnvironmentIndexMapper(TabStripModel* model);
   EnvironmentIndexMapper(const EnvironmentIndexMapper&) = delete;
@@ -99,14 +106,18 @@ class EnvironmentIndexMapper {
 
   // ---- queries scoped to an explicit environment -------------------------
 
-  // Number of tabs belonging to `environment_id`.
-  int GetVisibleCount(const std::string& environment_id) const;
+  // Number of ordinary tabs belonging to `environment_id`.
+  int GetEnvironmentTabCount(const std::string& environment_id) const;
 
-  // Global indices of every tab in `environment_id`, in model order.
+  // Global indices of all visible tabs, including browser-level tabs.
   std::vector<int> GetVisibleGlobalIndices(
       const std::string& environment_id) const;
 
-  // True when the tab at `global_index` belongs to `environment_id`.
+  // Ordinary tabs belonging to this environment, excluding browser-level tabs.
+  std::vector<int> GetEnvironmentTabIndices(
+      const std::string& environment_id) const;
+
+  // True when visible in this environment, including browser-level tabs.
   bool IsTabVisible(const std::string& environment_id, int global_index) const;
 
   // ---- conversions (return nullopt on invalid input) ---------------------
@@ -115,23 +126,23 @@ class EnvironmentIndexMapper {
   std::optional<int> VisibleToGlobal(const std::string& environment_id,
                                      int visible_index) const;
 
-  // global index -> visible index. nullopt when the tab is not in
-  // `environment_id`.
+  // global index -> visible index. nullopt when not visible in this
+  // environment.
   std::optional<int> GlobalToVisible(const std::string& environment_id,
                                      int global_index) const;
 
   // ---- navigation within one environment ---------------------------------
 
-  // First tab of `environment_id`. nullopt when the environment is empty.
+  // First visible tab, including a browser-level tab; nullopt when none.
   std::optional<int> GetFirstVisibleGlobalIndex(
       const std::string& environment_id) const;
 
-  // Next / previous tab of `environment_id` relative to `global_index`.
-  // With `wrap`, an empty result wraps to the other end; without it, returns
-  // nullopt at the boundary. Returns nullopt when the environment is empty.
-  std::optional<int> GetNextVisibleGlobalIndex(const std::string& environment_id,
-                                               int global_index,
-                                               bool wrap) const;
+  // Next / previous visible tab relative to `global_index`, including
+  // browser-level tabs. With `wrap`, an empty result wraps to the other end.
+  std::optional<int> GetNextVisibleGlobalIndex(
+      const std::string& environment_id,
+      int global_index,
+      bool wrap) const;
   std::optional<int> GetPreviousVisibleGlobalIndex(
       const std::string& environment_id,
       int global_index,
@@ -157,7 +168,7 @@ class EnvironmentIndexMapper {
 
   // ---- shared queries ----------------------------------------------------
 
-  // Environment id of the tab at `global_index`; nullopt when out of range.
+  // Environment id, or nullopt for a browser-level tab or an invalid index.
   std::optional<std::string> EnvironmentOfGlobalIndex(int global_index) const;
 
   // Global index of the currently active tab, or nullopt when none.

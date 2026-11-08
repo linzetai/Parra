@@ -1,0 +1,62 @@
+<!doctype html>
+<html dir="ltr" lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="color-scheme" content="light dark">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parra · 环境管理</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <!--
+    RESOURCE NAMES, NOT SOURCE FILE NAMES.
+
+    build_webui() runs every .css and .ts file through a wrapper step, so the generated
+    resource paths carry a .js suffix:
+      parra.css      -> parra.css.js     (a module that injects a <style> block)
+      parra.ts       -> parra.js
+    Referencing "parra.css" here therefore requests a path that does not exist in the
+    data source, and a failed subresource aborts the whole navigation with
+    net::ERR_FAILED -- the page never commits even though the WebUIController was
+    constructed successfully. That is exactly the failure observed while bringing this
+    page up.
+
+    Because the CSS arrives as a JS module, it is imported from parra.ts rather than
+    linked here: a <link href="parra.css.js"> would try to parse JS as CSS. The module
+    graph is therefore: parra.js -> parra.css.js (side-effect import).
+  -->
+  <script type="module" src="parra.js"></script>
+</head>
+<body>
+  <!--
+    The whole page is one custom element. There is no framework here on purpose:
+    the page has exactly one view (list + detail), and a component tree would add
+    a layer between the Mojo replies and the DOM without removing any code.
+  -->
+  <parra-app id="app"></parra-app>
+
+  <!--
+    A visible failure surface. If the module fails to load (a Mojo binding mismatch,
+    a CSP problem), the browser shows a blank page and the user has no way to tell
+    "empty" from "broken". This message stays hidden until the script proves it ran.
+  -->
+  <div id="boot-error" hidden>
+    <h1>页面无法初始化</h1>
+    <p>环境管理页面的前端脚本没有启动。这通常意味着构建产物不完整，而不是你的环境数据出了问题。</p>
+    <p id="boot-error-detail"></p>
+  </div>
+
+  <!--
+    NO INLINE SCRIPT HERE.
+
+    There used to be one, arming a setTimeout that revealed the panel above if the module
+    never ran. It never worked: WebUI pages are served under a strict CSP
+    (script-src chrome://resources chrome://webui-test 'self') that blocks inline
+    execution outright, and the violation is fatal to the surrounding logic:
+
+      Executing inline script violates the following Content Security Policy directive
+      'script-src chrome://resources chrome://webui-test 'self''.
+
+    The watchdog now lives in parra.ts, which is an external module and therefore allowed.
+    Anything that must run before the module loads belongs in a served .js file, not here.
+  -->
+</body>
+</html>

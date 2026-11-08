@@ -10,6 +10,7 @@
 #include "net/proxy_resolution/pac_file_fetcher_impl.h"
 #include "net/proxy_resolution/proxy_config_service.h"
 #include "services/network/network_context.h"
+#include "services/network/host_override_proxy_resolution_service.h"
 #include "services/network/proxy_service_mojo.h"
 #include "services/network/public/cpp/features.h"
 #if BUILDFLAG(IS_WIN)
@@ -37,6 +38,23 @@ void URLRequestContextBuilderMojo::SetMojoProxyResolverFactory(
     mojo::PendingRemote<proxy_resolver::mojom::ProxyResolverFactory>
         mojo_proxy_resolver_factory) {
   mojo_proxy_resolver_factory_ = std::move(mojo_proxy_resolver_factory);
+}
+
+void URLRequestContextBuilderMojo::SetParraHostOverrideRules(
+    std::string rules,
+    mojom::HostOverridePolicy policy,
+    std::string policy_reason,
+    uint64_t revision,
+    uint64_t generation,
+    base::OnceCallback<void(HostOverrideProxyResolutionService*)>
+      on_wrapper_created) {
+  parra_host_override_enabled_ = true;
+  parra_host_override_rules_ = std::move(rules);
+  parra_host_override_policy_ = policy;
+  parra_host_override_policy_reason_ = std::move(policy_reason);
+  parra_host_mapping_revision_ = revision;
+  parra_host_mapping_generation_ = generation;
+  on_host_override_wrapper_created_ = std::move(on_wrapper_created);
 }
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
@@ -69,6 +87,22 @@ URLRequestContextBuilderMojo::CreateDhcpPacFileFetcher(
 }
 
 std::unique_ptr<net::ProxyResolutionService>
+URLRequestContextBuilderMojo::MaybeWrapHostOverride(
+    std::unique_ptr<net::ProxyResolutionService> proxy_resolution_service) {
+  if (!parra_host_override_enabled_) {
+    return proxy_resolution_service;
+  }
+  auto wrapper = std::make_unique<HostOverrideProxyResolutionService>(
+      std::move(proxy_resolution_service), parra_host_override_rules_,
+      parra_host_override_policy_, parra_host_override_policy_reason_,
+      parra_host_mapping_revision_, parra_host_mapping_generation_);
+  if (on_host_override_wrapper_created_) {
+    std::move(on_host_override_wrapper_created_).Run(wrapper.get());
+  }
+  return wrapper;
+}
+
+std::unique_ptr<net::ProxyResolutionService>
 URLRequestContextBuilderMojo::CreateProxyResolutionService(
     std::unique_ptr<net::ProxyConfigService> proxy_config_service,
     net::URLRequestContext* url_request_context,
@@ -90,7 +124,7 @@ URLRequestContextBuilderMojo::CreateProxyResolutionService(
                 std::move(mojo_system_proxy_resolver_)),
             net_log);
     if (proxy_resolution_service)
-      return proxy_resolution_service;
+      return MaybeWrapHostOverride(std::move(proxy_resolution_service));
   }
 #elif BUILDFLAG(IS_MAC)
   if (mojo_system_proxy_resolver_) {
@@ -99,7 +133,7 @@ URLRequestContextBuilderMojo::CreateProxyResolutionService(
             std::make_unique<MacSystemProxyResolverMojo>(
                 std::move(mojo_system_proxy_resolver_)));
     if (proxy_resolution_service) {
-      return proxy_resolution_service;
+      return MaybeWrapHostOverride(std::move(proxy_resolution_service));
     }
   }
 #elif BUILDFLAG(IS_LINUX)
@@ -109,7 +143,7 @@ URLRequestContextBuilderMojo::CreateProxyResolutionService(
             std::make_unique<LinuxSystemProxyResolverMojo>(
                 std::move(mojo_system_proxy_resolver_)));
     if (proxy_resolution_service) {
-      return proxy_resolution_service;
+      return MaybeWrapHostOverride(std::move(proxy_resolution_service));
     }
   }
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
@@ -120,16 +154,18 @@ URLRequestContextBuilderMojo::CreateProxyResolutionService(
 
     std::unique_ptr<net::PacFileFetcherImpl> pac_file_fetcher;
     pac_file_fetcher = net::PacFileFetcherImpl::Create(url_request_context);
-    return CreateConfiguredProxyResolutionServiceUsingMojoFactory(
+    return MaybeWrapHostOverride(
+      CreateConfiguredProxyResolutionServiceUsingMojoFactory(
         std::move(mojo_proxy_resolver_factory_),
         std::move(proxy_config_service), std::move(pac_file_fetcher),
         std::move(dhcp_pac_file_fetcher), host_resolver, net_log,
-        pac_quick_check_enabled, network_delegate);
+        pac_quick_check_enabled, network_delegate));
   }
 
-  return net::URLRequestContextBuilder::CreateProxyResolutionService(
-      std::move(proxy_config_service), url_request_context, host_resolver,
-      network_delegate, net_log, pac_quick_check_enabled);
+    return MaybeWrapHostOverride(
+      net::URLRequestContextBuilder::CreateProxyResolutionService(
+        std::move(proxy_config_service), url_request_context, host_resolver,
+        network_delegate, net_log, pac_quick_check_enabled));
 }
 
 }  // namespace network

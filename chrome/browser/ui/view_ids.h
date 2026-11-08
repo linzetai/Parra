@@ -120,6 +120,13 @@ enum ViewID {
 
   // Media Picker screen scroll view.
   VIEW_ID_MEDIA_PICKER_SCREEN_SCROLL_VIEW,
+
+  // Parra: the environment switcher in the toolbar.
+  //
+  // Appended AFTER everything else on purpose: ids in this enum are compared
+  // and persisted (VIEW_ID_PREDEFINED_COUNT bounds a browsertest), so inserting
+  // in the middle would shift every later value. New ids belong at the end.
+  VIEW_ID_PARRA_ENVIRONMENT_SWITCHER,
 };
 
 #endif  // CHROME_BROWSER_UI_VIEW_IDS_H_

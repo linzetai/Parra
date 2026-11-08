@@ -5,6 +5,7 @@
 #include "services/network/network_context.h"
 
 #include <algorithm>
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <string>
@@ -128,6 +129,7 @@
 #include "services/network/http_auth_cache_proxy_copier.h"
 #include "services/network/http_server_properties_pref_delegate.h"
 #include "services/network/ignore_errors_cert_verifier.h"
+#include "services/network/host_override_proxy_resolution_service.h"
 #include "services/network/is_browser_initiated.h"
 #include "services/network/known_legacy_scope_domains_delegate.h"
 #include "services/network/logical_invalidation_store.h"
@@ -235,6 +237,8 @@
 namespace network {
 
 namespace {
+
+std::atomic<uint64_t> g_next_host_mapping_generation{1};
 
 net::CertVerifier* g_cert_verifier_for_testing = nullptr;
 
@@ -740,6 +744,16 @@ NetworkContext::NetworkContext(
       variations_headers_(std::move(params_->initial_variations_headers)) {
   TRACE_EVENT0("loading", "NetworkContext::NetworkContext");
 
+      host_mapping_generation_ =
+        g_next_host_mapping_generation.fetch_add(1, std::memory_order_relaxed);
+      host_mapping_revision_ = params_->host_mapping_revision;
+      host_override_policy_ = params_->host_override_policy;
+      host_override_policy_reason_ = params_->host_override_policy_reason;
+      if (params_->host_override_policy_client_receiver.is_valid()) {
+      host_override_policy_receiver_.Bind(
+        std::move(params_->host_override_policy_client_receiver));
+      }
+
   if (features::ShouldBindNetworkContextDirectReceiver()) {
     receiver_.emplace<DirectReceiver>(mojo::DirectReceiverKey{}, this);
   }
@@ -932,10 +946,9 @@ NetworkContext::NetworkContext(
       is_observing_reporting_service_(false),
 #endif  // BUILDFLAG(ENABLE_REPORTING)
       receiver_(std::in_place_type<Receiver>, this),
-      cookie_manager_(std::make_unique<CookieManager>(
-          url_request_context,
-          nullptr,
-          /*params=*/nullptr)),
+      cookie_manager_(std::make_unique<CookieManager>(url_request_context,
+                                                      nullptr,
+                                                      /*params=*/nullptr)),
       socket_factory_(
           std::make_unique<SocketFactory>(url_request_context_->net_log(),
                                           url_request_context)),
@@ -2016,6 +2029,88 @@ void NetworkContext::SetEnableReferrers(bool enable_referrers) {
   network_delegate_->set_enable_referrers(enable_referrers);
 }
 
+bool NetworkContext::SetHostMappingRulesForTesting(const std::string& rules) {
+  std::string error;
+  const bool applied =
+      ApplyHostMappingRules(rules, host_mapping_revision_ + 1, &error);
+  if (!applied) {
+    host_mapping_error_ = error;
+  }
+  return applied;
+}
+
+void NetworkContext::SetHostMappingRules(const std::string& rules,
+                                         uint64_t revision,
+                                         SetHostMappingRulesCallback callback) {
+  std::string error;
+  const bool applied = ApplyHostMappingRules(rules, revision, &error);
+  if (!applied) {
+    host_mapping_error_ = error;
+    LOG(ERROR) << "parra-poc: host mapping update NOT applied: " << error;
+  }
+  std::move(callback).Run(applied, error, host_mapping_revision_,
+                          host_mapping_generation_, host_override_policy_,
+                          host_override_policy_reason_);
+}
+
+bool NetworkContext::ApplyHostMappingRules(const std::string& rules,
+                                           uint64_t revision,
+                                           std::string* error) {
+  if (!url_request_context_) {
+    *error = "this NetworkContext has no URLRequestContext";
+    return false;
+  }
+  net::HostResolver* host_resolver = url_request_context_->host_resolver();
+  if (!host_resolver) {
+    *error = "this URLRequestContext has no HostResolver";
+    return false;
+  }
+  if (revision < host_mapping_revision_) {
+    *error = "stale host mapping revision";
+    return false;
+  }
+    HostOverrideProxyResolutionService* host_override =
+      host_override_proxy_resolution_service_;
+  if (params_->parra_host_override_enabled && !host_override) {
+    *error = "Environment proxy override service is not installed";
+    return false;
+  }
+  if (params_->parra_host_override_enabled &&
+      !HostOverrideProxyResolutionService::ValidateHostMappingRules(rules)) {
+    *error = "proxy override rules rejected the host mapping snapshot";
+    return false;
+  }
+  // Both layers are installed at NetworkContext creation, including when the
+  // initial source was empty. Their synchronous replacements occur on this
+  // sequence, so no request can observe a mixed resolver/proxy snapshot.
+  if (!host_resolver->SetHostMappingRules(rules)) {
+    *error = "the HostResolver has no mapping layer";
+    return false;
+  }
+  if (host_override &&
+      !host_override->SetHostMappingRules(rules, revision)) {
+    *error = "proxy override rejected the host mapping revision";
+    return false;
+  }
+  host_mapping_revision_ = revision;
+  LOG(INFO) << "parra-host-override: resolver/proxy snapshot applied revision="
+            << revision << " generation=" << host_mapping_generation_;
+  return true;
+}
+
+void NetworkContext::UpdateHostOverridePolicy(
+    mojom::HostOverridePolicy policy,
+    const std::string& reason) {
+  host_override_policy_ = policy;
+  host_override_policy_reason_ = reason;
+    HostOverrideProxyResolutionService* host_override =
+      host_override_proxy_resolution_service_;
+  if (!host_override) {
+    return;
+  }
+  host_override->SetPolicy(policy, reason);
+}
+
 #if BUILDFLAG(IS_CT_SUPPORTED)
 void NetworkContext::SetCTPolicy(mojom::CTPolicyPtr ct_policy) {
   if (!require_ct_delegate_) {
@@ -2902,6 +2997,18 @@ URLRequestContextOwner NetworkContext::MakeURLRequestContext(
   URLRequestContextBuilderMojo builder;
   const base::CommandLine* command_line =
       base::CommandLine::ForCurrentProcess();
+  if (params_->parra_host_override_enabled) {
+    builder.SetParraHostOverrideRules(
+      params_->parra_host_override_rules, host_override_policy_,
+      host_override_policy_reason_, host_mapping_revision_,
+        host_mapping_generation_,
+        base::BindOnce(
+            [](NetworkContext* context,
+               HostOverrideProxyResolutionService* host_override) {
+              context->host_override_proxy_resolution_service_ = host_override;
+            },
+            base::Unretained(this)));
+  }
 
   bool is_network_bound = bound_network != net::handles::kInvalidNetworkHandle;
   if (is_network_bound) {
@@ -3276,10 +3383,11 @@ URLRequestContextOwner NetworkContext::MakeURLRequestContext(
   // changing global routing for the whole browser. Remapping happens at
   // resolution time only: the request URL, HTTP Host/:authority, TLS SNI and
   // certificate verification all keep using the original hostname.
-  const bool has_scoped_host_mapping_rules =
+    const bool has_scoped_host_mapping_rules =
       params_->host_mapping_rules.has_value() &&
-      !params_->host_mapping_rules->empty();
-  if (has_scoped_host_mapping_rules) {
+      (params_->parra_host_override_enabled ||
+       !params_->host_mapping_rules->empty());
+    if (has_scoped_host_mapping_rules) {
     builder.set_host_mapping_rules(*params_->host_mapping_rules);
   } else if (command_line->HasSwitch(switches::kHostResolverRules)) {
     builder.set_host_mapping_rules(
@@ -4218,7 +4326,6 @@ void NetworkContext::SetVariationsHeaders(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   variations_headers_ = std::move(variations_headers);
 }
-
 
 bool NetworkContext::HasCookieAccessForDeviceBoundSession(
     const net::device_bound_sessions::CookieAccessCheckParams& params) {

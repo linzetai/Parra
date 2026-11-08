@@ -410,6 +410,55 @@ cr-toast-manager {
   -webkit-mask-image: url(chrome://resources/cr_components/most_visited/collapse_content.svg);
 }
 
+@media (forced-colors: none) {
+  :host([parra-workspace]) {
+    --most-visited-gap: 12px;
+    --most-visited-icon-size: 36px;
+    --most-visited-tile-size: 112px;
+    --tile-hover-color: color-mix(in srgb,
+        var(--color-searchbox-background) 88%,
+        var(--color-new-tab-page-most-visited-foreground));
+  }
+
+  :host([parra-workspace]) #container {
+    justify-content: flex-start;
+    width: min(736px, calc(100vw - 48px));
+  }
+
+  :host([parra-workspace]) .tile,
+  :host([parra-workspace]) #addShortcut,
+  :host([parra-workspace]) #showMore,
+  :host([parra-workspace]) #showLess {
+    background-color: color-mix(in srgb,
+        var(--color-searchbox-background) 96%,
+        var(--color-new-tab-page-most-visited-foreground));
+    border: 1px solid color-mix(in srgb,
+        var(--color-searchbox-background) 82%,
+        var(--color-new-tab-page-most-visited-foreground));
+    border-radius: 12px;
+  }
+
+  :host([parra-workspace]) .tile-icon {
+    border-radius: 9px;
+  }
+
+  :host([parra-workspace][is-dark_]) {
+    --tile-hover-color: #3a4246;
+  }
+
+  :host([parra-workspace][is-dark_]) .tile,
+  :host([parra-workspace][is-dark_]) #addShortcut,
+  :host([parra-workspace][is-dark_]) #showMore,
+  :host([parra-workspace][is-dark_]) #showLess {
+    background-color: #30363b;
+    border-color: #4c555a;
+  }
+
+  :host([parra-workspace][is-dark_]) .tile-icon {
+    background-color: #40484d;
+  }
+}
+
 <if expr="is_android">
 /* AL has a narrower minimum window width than desktop Chrome, so the
  * "Add / Edit shortcut" dialog uses min() to cap at 380px while

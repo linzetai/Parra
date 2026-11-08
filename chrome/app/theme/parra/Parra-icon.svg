@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100" role="img" aria-label="Parra logo">
+  <rect width="100" height="100" rx="23" fill="#191D2C"/>
+  <rect x="19" y="17" width="27" height="66" rx="13.5" fill="#A997FF" transform="rotate(13 32 50)"/>
+  <rect x="54" y="17" width="27" height="66" rx="13.5" fill="#6DE5C0" transform="rotate(13 67 50)"/>
+  <circle cx="50" cy="50" r="8" fill="#191D2C"/>
+</svg>

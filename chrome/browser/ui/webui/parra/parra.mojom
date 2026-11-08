@@ -1,0 +1,184 @@
+// Copyright 2026 The Parra Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+// The chrome://parra environment-management page.
+//
+// DESIGN CONSTRAINT THAT SHAPES THIS API
+//
+// The page must never be able to claim more than the browser will actually do. Two
+// examples drive the shape of the types below:
+//
+//   * "Saved" is not the same as "written to disk". EnvironmentStore separates
+//     SetString() (in memory) from CommitPendingWrite() (bytes handed to the OS), and
+//     a crash in between loses the change. So SaveEnvironment() returns a
+//     PersistStatus, and the page is expected to say "saved in memory" until the
+//     store reports Persisted.
+//
+//   * "Host mapping saved" is not the same as "host mapping in effect". The page
+//     updates a live NetworkContext and reports if that update cannot complete.
+//
+// The UI deliberately calls the EXISTING EnvironmentStore rather than a new
+// abstraction: validation, reserved-id handling and read-only detection all already
+// live there, and a parallel path would eventually disagree with it.
+
+module parra.mojom;
+
+// Mirrors EnvironmentStore's PersistState. A dedicated enum rather than a bool
+// because "in memory only" and "on disk" lead to different advice for the user, and
+// collapsing them is how a page ends up over-promising durability.
+enum PersistStatus {
+  kUnchanged,
+  kMemoryUpdated,
+  kPersisted,
+  kPersistFailed,
+};
+
+// Mirrors parra::StoreResult. Every value is surfaced so the page can explain what
+// the user can do about it; a single "error" string would force the page to guess.
+enum StoreOutcome {
+  kOk,
+  kInvalidId,
+  kDuplicateId,
+  kNotFound,
+  kReservedId,
+  kInvalidField,
+  kInvalidHostMapping,
+  kReadOnly,
+  kPersistFailed,
+  kRefusedTabsOpen,
+};
+
+// The grammar selected for host_mappings. Persisted values are explicit so a
+// mode change can never reinterpret existing text silently.
+enum HostMappingFormat {
+  kStandardHosts,
+  kWhistleHost,
+  kChromiumMap,
+  kUnsupported,
+};
+
+// One environment, as the page needs it.
+struct EnvironmentInfo {
+  // Stable and IMMUTABLE: also the StoragePartition partition_name. The page shows it
+  // read-only and never offers to change it.
+  string id;
+  string name;
+  // "#RRGGBB" or empty. A string, not a packed integer, so the low layers stay free
+  // of //ui and //third_party/skia dependencies.
+  string color;
+  string icon;
+  string host_mappings;
+  HostMappingFormat host_mapping_format;
+  bool enabled;
+  // True for the reserved `personal` environment, which is implicit (never a stored
+  // record) and cannot be deleted or renamed. The page uses this to disable actions
+  // rather than to let a request fail.
+  bool is_personal;
+  // Number of tabs currently open in this environment across all windows. Used by the
+  // delete section: this build refuses to delete an environment with tabs, so the page
+  // must be able to say why before the user tries.
+  int32 tab_count;
+};
+
+// Everything the page needs for a first paint, in one reply. Separate calls would let
+// the page render a list that disagrees with the read-only banner.
+struct EnvironmentListResult {
+  array<EnvironmentInfo> environments;
+  // True when the stored blob was written by a newer binary, so every write is
+  // refused. The page shows a banner and disables the save/delete controls.
+  bool read_only;
+  PersistStatus persist_status;
+  // Non-empty when the stored configuration could not be parsed. The page shows it
+  // instead of an empty list that would look like "you have no environments".
+  string load_diagnostics;
+};
+
+// The result of a write. Carries the outcome AND the resulting persistence state,
+// because those answer different user questions ("did it work?" vs "is it durable?").
+enum HostMappingApplyStatus {
+  kNotRequested,
+  kSavedPending,
+  kAppliedToNetworkContext,
+  kPolicyBlocked,
+  kUnknown,
+  kFailed,
+};
+
+struct WriteResult {
+  StoreOutcome outcome;
+  // Human-readable reason, empty on success. Produced by the store's validators so the
+  // page shows the same wording the store logs.
+  string error;
+  PersistStatus persist_status;
+  // True when the rules were stored but could not be applied to the live
+  // NetworkContext. False means no live-apply failure was reported; there may
+  // have been no existing context to update. It does not independently verify
+  // which backend a request will reach.
+  bool host_mapping_apply_failed;
+  HostMappingApplyStatus host_mapping_apply_status;
+  uint64 desired_host_mapping_revision;
+  uint64 applied_host_mapping_revision;
+  uint64 network_context_generation;
+  string routing_policy_reason;
+  // The environment after the write, so the page can re-render without a second call
+  // (and without a race where another window changed it in between).
+  EnvironmentInfo? environment;
+};
+
+// Interface for creating a PageHandler -- the WebUI entry point, implemented in the
+// browser process.
+interface PageHandlerFactory {
+  CreatePageHandler(pending_remote<Page> page,
+                    pending_receiver<PageHandler> handler);
+};
+
+// Implemented in the browser process. Every method is a thin pass-through to
+// EnvironmentStore; none of them re-implements validation.
+interface PageHandler {
+  // Initial load: the list plus the two pieces of global state the page must show.
+  GetEnvironments() => (EnvironmentListResult result);
+
+  // Profile-local external HTTP/HTTPS routing. Policy: 0 ask, 1 active, 2 fixed.
+  GetExternalLinkPolicy() => (int32 policy, string environment_id);
+  SetExternalLinkPolicy(int32 policy, string environment_id) =>
+      (bool success, string error);
+
+  // Creates an environment. `id` is supplied by the page because it is also the
+  // partition name and must therefore be stable and predictable; the page derives it
+  // from the name, and the store validates it.
+  CreateEnvironment(string id, string name, string color, string icon,
+                    string host_mappings,
+                    HostMappingFormat host_mapping_format) => (WriteResult result);
+
+  // Partial update. Every field is a string plus a `has_*` flag rather than
+  // `string?`, because Mojo's optional would make "clear the colour" and "leave the
+  // colour alone" indistinguishable at the call site.
+  UpdateEnvironment(string id,
+                    bool has_name, string name,
+                    bool has_color, string color,
+                    bool has_icon, string icon) => (WriteResult result);
+
+  // Host mappings are a separate call because their blast radius is different: the
+  // rules go into a NetworkContext and their live update must be confirmed. Kept
+  // apart from UpdateEnvironment() so a generic field edit cannot silently change
+  // network routing.
+  SetHostMappings(string id, string host_mappings,
+                  HostMappingFormat host_mapping_format) => (WriteResult result);
+
+  // Enables or disables selection of this environment. This is a SELECTION-LAYER
+  // switch only: it never changes a partition, a rule, or an existing tab's storage.
+  SetEnabled(string id, bool enabled) => (WriteResult result);
+
+  // Removes the definition. Refused while the environment still has tabs (this build
+  // has no invalidated-environment UI), and it never deletes a StoragePartition, so
+  // the page must state that site data is NOT removed.
+  DeleteEnvironment(string id) => (WriteResult result);
+};
+
+// Pushes changes the page did not initiate -- another window edited, disabled or
+// deleted an environment. Without this the page would show stale data after the user
+// acts in the toolbar switcher.
+interface Page {
+  OnEnvironmentsChanged();
+};

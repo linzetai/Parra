@@ -12,6 +12,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "cc/paint/paint_flags.h"
+#include "chrome/browser/parra/ui/environment_ui_util.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
@@ -25,6 +26,7 @@
 #include "chrome/browser/ui/views/tabs/tab.h"
 #include "chrome/browser/ui/views/tabs/tab/glow_hover_controller.h"
 #include "chrome/browser/ui/views/tabs/tab_group_underline.h"
+#include "chrome/browser/ui/views/tabs/tab_style_views.h"
 #include "chrome/grit/theme_resources.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "third_party/skia/include/core/SkPathBuilder.h"
@@ -36,6 +38,8 @@
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/scoped_canvas.h"
+#include "ui/native_theme/native_theme.h"
+#include "ui/views/cascading_property.h"
 #include "ui/views/controls/separator.h"
 #include "ui/views/widget/widget.h"
 
@@ -731,9 +735,28 @@ SkColor HorizontalTabStyleViews::GetCurrentTabBackgroundColor(
           ? delegate_->GetView()->GetWidget()->ShouldPaintAsActive()
           : true;
   const bool frame_glass = delegate_->IsGlassFrame();
-  return tab_style()->GetCurrentTabBackgroundColor(
+  const SkColor upstream = tab_style()->GetCurrentTabBackgroundColor(
       selection_state, hovered, GetHoverAnimationValue(), frame_active,
       frame_glass, delegate_->GetView()->GetColorProvider());
+  auto* view = const_cast<views::View*>(delegate_->GetView());
+  if (view->GetNativeTheme()->forced_colors() !=
+      ui::ColorProviderKey::ForcedColors::kNone) {
+    return upstream;
+  }
+  const auto surface =
+      views::GetCascadingProperty(view, kParraEnvironmentTabColor);
+  if (!surface) {
+    return upstream;
+  }
+  const auto tokens = parra::MakeBrowserUiTokens(
+      *surface, view->GetColorProvider()->GetColor(kColorToolbar));
+  if (selection_state == TabStyle::TabSelectionState::kActive) {
+    return tokens.active_tab_surface;
+  }
+  if (hovered) {
+    return tokens.surface_hover;
+  }
+  return tokens.inactive_tab_surface;
 }
 
 TabStyle::TabSelectionState HorizontalTabStyleViews::GetSelectionState() const {

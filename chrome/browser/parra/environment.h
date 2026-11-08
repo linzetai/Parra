@@ -6,12 +6,25 @@
 #define CHROME_BROWSER_PARRA_ENVIRONMENT_H_
 
 #include <optional>
+#include <stdint.h>
 #include <string>
 
 #include "base/time/time.h"
 #include "content/public/browser/storage_partition_config.h"
 
 namespace parra {
+
+// The source grammar used to interpret `host_mappings`. Persisted records that
+// predate this field default to kChromiumMap so existing rules are never
+// reinterpreted based on their text shape.
+enum class HostMappingFormat {
+  kStandardHosts,
+  kWhistleHost,
+  kChromiumMap,
+  // An unknown persisted value. The store becomes read-only and the mapping is
+  // not applied until a build that understands the format is available.
+  kUnsupported,
+};
 
 // One environment definition, as a value.
 //
@@ -47,13 +60,17 @@ struct Environment {
   // location.
   std::string icon;
 
-  // net::HostMappingRules syntax, comma separated between rules, e.g.
-  //   "map sheet.test 127.0.0.1:8443, exclude localhost"
-  //
-  // Stored exactly as the NetworkContext will consume it so there is no
-  // translation layer that could disagree with what actually takes effect.
+  // Original user text in the grammar selected by `host_mapping_format`.
+  // It is preserved as entered and compiled before it reaches NetworkContext.
   // Empty means "no remapping". See docs/parra/50 §3.3.
   std::string host_mappings;
+
+  // Source format. Legacy stored records are read as kChromiumMap.
+  HostMappingFormat host_mapping_format = HostMappingFormat::kChromiumMap;
+
+  // In-memory generation of the mapping snapshot. It is intentionally not
+  // serialized: a restarted profile creates a fresh NetworkContext generation.
+  uint64_t host_mapping_revision = 1;
 
   // When the environment was created. Written once.
   base::Time created_at;
@@ -79,6 +96,8 @@ struct EnvironmentDraft {
   std::string color;
   std::string icon;
   std::string host_mappings;
+  // Newly created environments use the standard Hosts syntax by default.
+  HostMappingFormat host_mapping_format = HostMappingFormat::kStandardHosts;
 };
 
 // A partial update. Every field is optional, and "present but empty" is
@@ -92,6 +111,7 @@ struct EnvironmentPatch {
   std::optional<std::string> color;
   std::optional<std::string> icon;
   std::optional<std::string> host_mappings;
+  std::optional<HostMappingFormat> host_mapping_format;
   std::optional<bool> enabled;
 };
 

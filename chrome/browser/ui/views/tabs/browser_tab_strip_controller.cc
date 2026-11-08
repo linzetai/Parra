@@ -62,6 +62,7 @@
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/browser/ui/web_applications/web_app_tabbed_utils.h"
+#include "chrome/browser/ui/window_feature_controller/window_feature_controller.h"
 #include "components/contextual_tasks/public/features.h"
 #include "components/feature_engagement/public/feature_constants.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
@@ -189,30 +190,31 @@ void BrowserTabStripController::InitFromModel(TabStrip* tabstrip) {
   //
   // This controller is constructed once per browser window and lives until that
   // window's tab strip is destroyed, which is exactly the lifetime the state
-  // needs. Not created lazily at read time: a query that creates state makes the
-  // answer depend on which component happened to run first, and it would let the
-  // state be resurrected during teardown.
+  // needs. Not created lazily at read time: a query that creates state makes
+  // the answer depend on which component happened to run first, and it would
+  // let the state be resurrected during teardown.
   //
   // CreateFor() returns null if a state already exists for this window, so a
   // second controller cannot silently overwrite the first one's state.
   //
   // CREATED UNCONDITIONALLY, including for a plain Chromium window that has no
-  // environments configured. The condition used to be IsParraPocEnabled(), which
-  // conflated two different questions:
+  // environments configured. The condition used to be IsParraPocEnabled(),
+  // which conflated two different questions:
   //
   //   "is Parra active in this process?"  (a configuration question),  and
   //   "does this window have a view state?"  (a structural question).
   //
-  // Tying the second to the first meant a window had NO state whenever Parra was
-  // not configured -- so nothing could record its active environment, and Session
-  // Restore found nothing to restore. It also forced callers to work around the
-  // absence by creating a second state object elsewhere (see
+  // Tying the second to the first meant a window had NO state whenever Parra
+  // was not configured -- so nothing could record its active environment, and
+  // Session Restore found nothing to restore. It also forced callers to work
+  // around the absence by creating a second state object elsewhere (see
   // docs/parra/64 section 2.1), which broke single-ownership.
   //
-  // The cost is one std::string, one small vector and one host registration. The
-  // behaviour for a Parra-less window is unchanged in every observable way: the
-  // active environment stays kDefaultEnvironmentId, and SetActiveEnvironment()
-  // reports "no change" for it, so nothing gets written to the session file.
+  // The cost is one std::string, one small vector and one host registration.
+  // The behaviour for a Parra-less window is unchanged in every observable way:
+  // the active environment stays kDefaultEnvironmentId, and
+  // SetActiveEnvironment() reports "no change" for it, so nothing gets written
+  // to the session file.
   if (!parra_window_state_) {
     parra_window_state_ =
         parra::WindowEnvironmentState::CreateFor(browser_view_->browser());
@@ -222,16 +224,42 @@ void BrowserTabStripController::InitFromModel(TabStrip* tabstrip) {
     }
   }
 
+  // Parra: re-lay out the strip whenever this window's active environment
+  // changes, no matter who changed it.
+  //
+  // WHY THIS IS HERE: an environment switch does not change the TabStripModel,
+  // so there is no model event to observe. Without this subscription the strip
+  // kept its old layout until some unrelated selection change happened to
+  // arrive, which is why a programmatic switch could leave the strip showing
+  // one environment while the content area showed another (docs/parra/93 §2.2,
+  // screenshot 90-09).
+  //
+  // Registering on the window's state (rather than on the switching controller)
+  // is what makes this survive: EnvironmentVisibilityController is a
+  // short-lived value object, so an observer hung off it would be forgotten as
+  // soon as that particular switch finished.
+  //
+  // The subscription is a member, so it unregisters with this controller. A
+  // window torn down mid-switch therefore cannot be called back.
+  if (parra_window_state_) {
+    parra_environment_changed_subscription_ =
+        parra_window_state_->AddActiveEnvironmentChangedCallback(
+            base::BindRepeating(
+                &BrowserTabStripController::OnActiveEnvironmentChanged,
+                base::Unretained(this)));
+  }
+
   // Parra: adopt the current environment as already applied, so the very first
-  // layout already filters, instead of briefly showing every environment's tabs.
+  // layout already filters, instead of briefly showing every environment's
+  // tabs.
   parra_last_applied_environment_ =
       parra::EnvironmentIndexMapper(model_).active_environment();
 
-  // Parra: install the "one environment per tab group" policy. Done here because
-  // this method runs exactly once per window, next to where the window's
-  // environment state is created. The tabs layer cannot hold this policy itself
-  // (it would need to depend on //chrome/browser/parra, a GN cycle), so it is
-  // injected from this side.
+  // Parra: install the "one environment per tab group" policy. Done here
+  // because this method runs exactly once per window, next to where the
+  // window's environment state is created. The tabs layer cannot hold this
+  // policy itself (it would need to depend on //chrome/browser/parra, a GN
+  // cycle), so it is injected from this side.
   parra::EnvironmentTabOperations::InstallGroupMembershipPolicy(model_);
   parra::EnvironmentTabOperations::InstallCloseCommandPolicy(model_);
 
@@ -282,35 +310,46 @@ bool BrowserTabStripController::IsValidIndex(int index) const {
 // still owns all nine tabs, it is only the answer to "should this one be on
 // screen" that changes.
 //
-// Returns true whenever Parra is inactive, so upstream behaviour is untouched.
+// NO ENABLEMENT GATE.
+//
+// This used to start with `if (!parra::IsParraPocEnabled()) return true;`,
+// which tied tab filtering to the --parra-poc-environments command line switch.
+// The consequence was user-visible and severe: a profile whose environments
+// were created through the UI lost ALL filtering the moment it was launched
+// without that switch, so every environment's tabs appeared at once
+// (docs/parra/93 §2.1, screenshot 90-08). "The feature is on" must not depend
+// on how the browser was started.
+//
+// The gate is unnecessary rather than merely moved. With no environments
+// configured, EnvironmentTag::Get() reports `personal` for every tab (an
+// untagged tab IS Personal by definition) and the active environment is also
+// `personal`, so this function returns true for every index -- exactly upstream
+// behaviour. The filter is therefore provably a no-op on a profile without
+// environments, which is why it can be applied unconditionally.
 bool BrowserTabStripController::IsModelIndexVisible(int model_index) const {
-  if (!parra::IsParraPocEnabled())
-    return true;
-
   // A tab that is not in the model cannot be shown, whatever the environment.
-  if (!model_->ContainsIndex(model_index))
+  if (!model_->ContainsIndex(model_index)) {
     return false;
+  }
 
   // Pinned tabs get NO cross-environment privilege.
   //
-  // Pinning is a "keep this around" statement about a tab, not a statement about
-  // which environment the user is looking at. A pinned tab keeps its environment
-  // tag, keeps its StoragePartition, and is hidden exactly like any other tab when
-  // its environment is not the active one. Making pinned tabs visible everywhere
-  // would leak another environment's title and favicon into the strip, which is
-  // the specific leak this phase exists to prevent.
+  // Pinning is a "keep this around" statement about a tab, not a statement
+  // about which environment the user is looking at. A pinned tab keeps its
+  // environment tag, keeps its StoragePartition, and is hidden exactly like any
+  // other tab when its environment is not the active one. Making pinned tabs
+  // visible everywhere would leak another environment's title and favicon into
+  // the strip, which is the specific leak this phase exists to prevent.
   const parra::EnvironmentIndexMapper mapper(model_);
   return mapper.IsTabVisible(mapper.active_environment(), model_index);
 }
 
 void BrowserTabStripController::SyncEnvironmentFilterIfStale() {
-  if (!parra::IsParraPocEnabled())
-    return;
-
   const std::string& active =
       parra::EnvironmentIndexMapper(model_).active_environment();
-  if (active == parra_last_applied_environment_)
+  if (active == parra_last_applied_environment_) {
     return;
+  }
 
   // Record the new environment FIRST. A re-layout re-enters this class through
   // ShouldTabBeVisible() -> IsModelIndexVisible(), and if the recorded value
@@ -326,15 +365,16 @@ void BrowserTabStripController::SyncEnvironmentFilterIfStale() {
     tabstrip_->DeprecatedLayoutImmediately();
   }
 
-  // Emitted right after the re-layout, so `view_visible_tabs` reflects the state
-  // the user is about to see rather than the state before the refresh.
+  // Emitted right after the re-layout, so `view_visible_tabs` reflects the
+  // state the user is about to see rather than the state before the refresh.
   LogVisibilitySnapshot("after-environment-change");
 }
 
-void BrowserTabStripController::LogVisibilitySnapshot(const char* reason) const {
-  if (!parra::IsParraPocEnabled() || !tabstrip_)
+void BrowserTabStripController::LogVisibilitySnapshot(
+    const char* reason) const {
+  if (!tabstrip_) {
     return;
-
+  }
   const parra::EnvironmentIndexMapper mapper(model_);
   int visible = 0;
   int hidden = 0;
@@ -342,25 +382,31 @@ void BrowserTabStripController::LogVisibilitySnapshot(const char* reason) const 
   std::string hidden_list;
   for (int i = 0; i < model_->count(); ++i) {
     const bool is_visible = IsModelIndexVisible(i);
+    // Same resolver IsModelIndexVisible() uses, so this log cannot report one
+    // environment for a tab that the filter is classifying as another.
     const std::string env =
-        parra::EnvironmentTag::Get(model_->GetWebContentsAt(i));
+        parra::EnvironmentIndexMapper::GetEnvironmentForContents(
+            model_->GetWebContentsAt(i));
     if (is_visible) {
       ++visible;
-      if (!visible_list.empty())
+      if (!visible_list.empty()) {
         visible_list += ",";
+      }
       visible_list += base::NumberToString(i) + ":" + env;
     } else {
       ++hidden;
-      if (!hidden_list.empty())
+      if (!hidden_list.empty()) {
         hidden_list += ",";
+      }
       hidden_list += base::NumberToString(i) + ":" + env;
     }
   }
 
   LOG(INFO) << "parra-ui: SNAPSHOT (" << reason << ") active_env='"
-            << mapper.active_environment() << "' model_count="
-            << model_->count() << " visible=" << visible << " hidden=" << hidden
-            << " | visible=" << visible_list << " | hidden=" << hidden_list;
+            << mapper.active_environment()
+            << "' model_count=" << model_->count() << " visible=" << visible
+            << " hidden=" << hidden << " | visible=" << visible_list
+            << " | hidden=" << hidden_list;
 
   // Cross-check against what the view layer actually thinks, so a filter that
   // reports the right answer but is not honoured by the layout cannot pass
@@ -368,8 +414,9 @@ void BrowserTabStripController::LogVisibilitySnapshot(const char* reason) const 
   int view_visible_tabs = 0;
   for (int i = 0; i < tabstrip_->GetTabCount(); ++i) {
     Tab* tab = tabstrip_->tab_at(i);
-    if (tab && tab->GetVisible())
+    if (tab && tab->GetVisible()) {
       ++view_visible_tabs;
+    }
   }
   LOG(INFO) << "parra-ui: SNAPSHOT (" << reason
             << ") view_tab_count=" << tabstrip_->GetTabCount()
@@ -377,10 +424,12 @@ void BrowserTabStripController::LogVisibilitySnapshot(const char* reason) const 
 }
 
 void BrowserTabStripController::ApplyEnvironmentFilter() {
-  if (!parra_window_state_)
+  if (!parra_window_state_) {
     return;
-  if (!tabstrip_)
+  }
+  if (!tabstrip_) {
     return;
+  }
 
   // Forcing the container through a full re-layout is what makes the filter
   // take effect: SetTabSlotVisibility() is what calls SetVisible() on each tab,
@@ -389,7 +438,121 @@ void BrowserTabStripController::ApplyEnvironmentFilter() {
   // instead of on the next unrelated layout pass.
   tabstrip_->InvalidateLayout();
   tabstrip_->DeprecatedLayoutImmediately();
-}bool BrowserTabStripController::IsActiveTab(int model_index) const {
+}
+
+void BrowserTabStripController::OnActiveEnvironmentChanged() {
+  // Everything this needs is already validated by the caller chain: the
+  // callback only exists while this controller is alive (the subscription is a
+  // member and unregisters on destruction), and `parra_window_state_` is what
+  // owns it.
+  //
+  // ORDER: create the missing tab FIRST, then lay out.
+  //
+  // Switching to an environment with no tabs leaves Chromium with an active tab
+  // that belongs to a DIFFERENT environment. The model cannot have zero tabs,
+  // so the pane keeps rendering that other environment's page -- measured with
+  // probe-empty-environment.js: toolbar `test-b`, empty strip, pane showing
+  // ENV-A with `hasFocus=true`. Creating the tab before the strip lays out
+  // means the layout pass runs against a settled state (correct environment AND
+  // its tab), so the strip and the content area agree after a single repaint
+  // instead of flickering through a foreign page.
+  EnsureActiveEnvironmentHasTab();
+
+  SyncEnvironmentFilterIfStale();
+}
+
+void BrowserTabStripController::EnsureActiveEnvironmentHasTab() {
+  if (!parra_window_state_ || !model_) {
+    return;
+  }
+
+  // Only a tab-strip window can be short of a tab; a window that does not
+  // support the tab strip has no environment concept to satisfy.
+  if (!WindowFeatureController::From(browser_view_->browser())
+           ->SupportsWindowFeature(
+               WindowFeatureController::WindowFeature::kFeatureTabStrip)) {
+    return;
+  }
+
+  const std::string environment_id =
+      parra::EnvironmentIndexMapper(model_).active_environment();
+  if (environment_id.empty()) {
+    return;
+  }
+
+  const parra::EnvironmentIndexMapper mapper(model_);
+  if (parra::BrowserLevelTab::Is(model_->GetActiveWebContents())) {
+    return;
+  }
+  if (mapper.GetEnvironmentTabCount(environment_id) > 0) {
+    return;
+  }
+
+  // Re-entrancy: chrome::NewTab() activates the new tab, which notifies the
+  // window state, which calls back into this method. The guard makes the inner
+  // call a no-op instead of creating a second tab.
+  if (parra_creating_empty_environment_tab_) {
+    return;
+  }
+  base::AutoReset<bool> guard(&parra_creating_empty_environment_tab_, true);
+
+  LOG(INFO)
+      << "parra-ui: environment '" << environment_id
+      << "' has no tab in this window; creating the first one so the content "
+         "area cannot keep showing another environment's page";
+
+  // chrome::NewTab() is the ONLY creation path that carries the intended
+  // environment: it reads
+  // EnvironmentTabOperations::EnvironmentForUserInitiatedNewTab(), which
+  // returns the environment id exactly when its visible count is zero, and
+  // passes it as NavigateParams::parra_environment_id. Calling
+  // TabStripModelDelegate::AddTabAt() instead would reach chrome::AddTabAt(),
+  // which hard-codes an empty id and lets the router inherit from the active
+  // tab -- i.e. the other environment.
+  //
+  // kNoUserAction, not kNewTabCommand: the user did not press new-tab, they
+  // selected an environment; the tab is created implicitly so the window can
+  // represent it. The context only affects the window action and UMA, not which
+  // environment is resolved.
+  chrome::NewTab(browser_view_->browser(), NewTabTypes::kNoUserAction);
+
+  // THE REAL INVARIANT CHECK.
+  //
+  // This is the point the check belongs at, and the reason it deliberately does
+  // not live in EnvironmentVisibilityController::SwitchTo(): that method
+  // returns while the target environment is still empty (the tab is created
+  // here, right after), so the invariant is FALSE there by construction.
+  // Checking it at the end of the creation is the first moment it can hold, and
+  // the first moment a cross-environment leak would be observable in the model.
+  //
+  // What is asserted: the environment now has exactly one more visible tab than
+  // before, and that count is no longer zero. If chrome::NewTab() had inherited
+  // the environment from the active tab (the AddTabAt() failure mode), the tab
+  // would have landed in the OUTGOING environment and this environment would
+  // still report zero.
+  const int visible_after =
+      parra::EnvironmentIndexMapper(model_).GetEnvironmentTabCount(
+          environment_id);
+  if (visible_after == 0) {
+    LOG(ERROR)
+        << "parra-ui: INVARIANT VIOLATED "
+           "(after-creating-empty-environment-tab): "
+           "environment '"
+        << environment_id
+        << "' still has no visible tab after chrome::NewTab(); the new tab was "
+           "created in a different environment, so the strip and the content "
+           "area disagree";
+  } else {
+    LOG(INFO) << "parra-ui: environment '" << environment_id << "' now has "
+              << visible_after
+              << " visible tab(s); the content area cannot be showing another "
+                 "environment's page";
+  }
+
+  LogVisibilitySnapshot("after-creating-empty-environment-tab");
+}
+
+bool BrowserTabStripController::IsActiveTab(int model_index) const {
   return GetActiveIndex() == model_index;
 }
 
@@ -816,42 +979,59 @@ void BrowserTabStripController::OnTabStripModelChanged(
     tabstrip_->SetSelection(selection.new_model);
   }
 
-  // Parra: an environment switch activates a tab in the new environment, so this
-  // is the point where the visible set must change too. Selection is the only
-  // model-visible consequence of a switch (the model itself is untouched), which
-  // is why the sync hangs off this event rather than off a tab event.
+  // Parra: an environment switch activates a tab in the new environment, so
+  // this is the point where the visible set must change too. Selection is the
+  // only model-visible consequence of a switch (the model itself is untouched),
+  // which is why the sync hangs off this event rather than off a tab event.
   //
   // ADOPT NATIVE ACTIVATION FIRST, THEN SYNC.
   //
   // Chromium can activate a tab without going through the Parra environment
-  // switcher: Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+1..9, a browser command, a bookmark,
-  // session restore, a window move. In every one of those cases the user is now
-  // looking at a page in some environment, and the tab strip must agree with the
-  // content area. Failing to adopt leaves the two permanently disagreeing: content
-  // shows an environment whose tabs the strip has hidden, so the strip shows no
-  // selection at all.
+  // switcher: Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+1..9, a browser command, a
+  // bookmark, session restore, a window move. In every one of those cases the
+  // user is now looking at a page in some environment, and the tab strip must
+  // agree with the content area. Failing to adopt leaves the two permanently
+  // disagreeing: content shows an environment whose tabs the strip has hidden,
+  // so the strip shows no selection at all.
   //
   // Adopting is preferred over refusing because the activation has already
   // happened by the time this observer runs; refusing would mean undoing a user
-  // action. The ordering matters: adopt first, then let the filter repaint for the
-  // newly adopted environment, so there is never an intermediate frame where the
-  // strip filters for the old environment while the content shows the new one.
-  if (parra::IsParraPocEnabled()) {
-    AdoptActiveTabEnvironment();
-  }
+  // action. The ordering matters: adopt first, then let the filter repaint for
+  // the newly adopted environment, so there is never an intermediate frame
+  // where the strip filters for the old environment while the content shows the
+  // new one.
+  //
+  // UNCONDITIONAL, NOT GATED ON --parra-poc-environments.
+  //
+  // This used to start with `if (parra::IsParraPocEnabled())`. That gate was
+  // the remaining half of the defect described on IsModelIndexVisible() above:
+  // a launch without the command line switch still filtered nothing, because
+  // the ADOPT step was skipped. The window's active environment then stayed
+  // `personal` while Chromium restored/activated a tab owned by another
+  // environment, and the strip drew only the Personal tabs while the content
+  // area showed a foreign page -- docs/parra/93 §2.2, reproduced with the M1
+  // build.
+  //
+  // No gate is needed. Without environments, every tab is `personal` and the
+  // window state is `personal`, so AdoptActiveTabEnvironment() returns at its
+  // first comparison and SyncEnvironmentFilterIfStale() sees no change:
+  // provably a no-op.
+  AdoptActiveTabEnvironment();
   SyncEnvironmentFilterIfStale();
 }
 
 void BrowserTabStripController::AdoptActiveTabEnvironment() {
-  if (!parra::IsParraPocEnabled() || !model_)
+  if (!model_) {
     return;
+  }
 
-  // Re-entrancy guard. Changing the environment below can lead back here through
-  // a re-layout (ShouldTabBeVisible -> IsModelIndexVisible) and, in principle,
-  // through a nested model notification. Without the guard two observers could
-  // ping-pong the environment between two tabs.
-  if (parra_adopting_active_tab_)
+  // Re-entrancy guard. Changing the environment below can lead back here
+  // through a re-layout (ShouldTabBeVisible -> IsModelIndexVisible) and, in
+  // principle, through a nested model notification. Without the guard two
+  // observers could ping-pong the environment between two tabs.
+  if (parra_adopting_active_tab_) {
     return;
+  }
 
   const int active_index = model_->active_index();
   if (active_index == TabStripModel::kNoTab ||
@@ -863,14 +1043,42 @@ void BrowserTabStripController::AdoptActiveTabEnvironment() {
   // tests, teardown) there is nothing to adopt into.
   parra::WindowEnvironmentState* state =
       parra::WindowEnvironmentState::GetForModel(model_);
-  if (!state)
+  if (!state) {
     return;
+  }
 
-  const std::string& owner =
-      parra::EnvironmentTag::Get(model_->GetWebContentsAt(active_index));
-
-  if (owner == state->active_environment())
+  if (parra::BrowserLevelTab::Is(model_->GetWebContentsAt(active_index))) {
     return;
+  }
+
+  const std::string owner =
+      parra::EnvironmentIndexMapper::GetEnvironmentForContents(
+          model_->GetWebContentsAt(active_index));
+
+  if (owner == state->active_environment()) {
+    return;
+  }
+
+  // SESSION RESTORE OWNS THE ENVIRONMENT WHILE IT IS RESTORING.
+  //
+  // Restore sets the window's environment from the session file and THEN
+  // restores the tabs, whose insertion activates a tab. That activation is
+  // bookkeeping, not a user action, so adopting it would discard the
+  // environment the user had chosen before closing the window. Without this
+  // check the restore lasted about 14 ms:
+  //
+  //   parra-restore: window active environment restored to 'test-b'
+  //   parra-env: active environment 'test-b' -> 'personal'     <-- this
+  //   function
+  //
+  // The suppression lasts for the whole restore (not one activation), because
+  // restoring N tabs performs N activations.
+  if (state->EnvironmentAdoptionSuppressed()) {
+    LOG(INFO) << "parra-ui: not adopting environment '" << owner
+              << "' during session restore; the restored environment '"
+              << state->active_environment() << "' stays authoritative";
+    return;
+  }
 
   base::AutoReset<bool> guard(&parra_adopting_active_tab_, true);
 
@@ -894,16 +1102,17 @@ void BrowserTabStripController::AdoptActiveTabEnvironment() {
   // re-selected puts its new tab back there (see
   // EnvironmentTabOperations::EnvironmentForUserInitiatedNewTab).
   const bool previous_environment_emptied =
-      parra::EnvironmentIndexMapper(model_).GetVisibleCount(
+      parra::EnvironmentIndexMapper(model_).GetEnvironmentTabCount(
           state->active_environment()) == 0;
 
-  LOG(INFO) << "parra-ui: native activation moved the active tab to environment '"
-            << owner << "' (was '" << state->active_environment() << "'"
-            << (previous_environment_emptied
-                    ? "; the previous environment now has no tabs"
-                    : "")
-            << "); adopting it for this window instead of leaving the strip and "
-               "the content area disagreeing";
+  LOG(INFO)
+      << "parra-ui: native activation moved the active tab to environment '"
+      << owner << "' (was '" << state->active_environment() << "'"
+      << (previous_environment_emptied
+              ? "; the previous environment now has no tabs"
+              : "")
+      << "); adopting it for this window instead of leaving the strip and "
+         "the content area disagreeing";
 
   state->SetActiveEnvironment(owner);
 }
@@ -1165,24 +1374,25 @@ void BrowserTabStripController::ExecuteContextMenuCommand(
     int event_flags) {
   const int context_index = model_->GetIndexOfTab(tab);
 
-  // Parra: every close command the tab context menu can issue is decided here, and
-  // the decision is three-valued on purpose.
+  // Parra: every close command the tab context menu can issue is decided here,
+  // and the decision is three-valued on purpose.
   //
-  // Why three values and not a bool: the previous round treated "could not produce
-  // a safe victim set" the same as "this is not a close command", so the caller
-  // fell through to Chromium's native path -- which is the GLOBAL, unfiltered set.
-  // That is precisely the "silently widen the operation" failure the containment
-  // exists to stop. An empty victim set must ABORT.
+  // Why three values and not a bool: the previous round treated "could not
+  // produce a safe victim set" the same as "this is not a close command", so
+  // the caller fell through to Chromium's native path -- which is the GLOBAL,
+  // unfiltered set. That is precisely the "silently widen the operation"
+  // failure the containment exists to stop. An empty victim set must ABORT.
   //
   // What needs guarding, and what does not:
   //
   //   * The tab's own close BUTTON goes through
-  //     TabStripModelDelegate::CloseTab(), which closes exactly ONE WebContents.
-  //     No cross-environment reach, not routed through here.
-  //   * CommandCloseTab closes the whole multi-selection; CommandCloseOtherTabs and
-  //     CommandCloseTabsToRight walk the GLOBAL model order; CommandCloseAllTabs
-  //     (web-app windows) also walks it. All four can reach tabs of other
-  //     environments, which are hidden from the strip.
+  //     TabStripModelDelegate::CloseTab(), which closes exactly ONE
+  //     WebContents. No cross-environment reach, not routed through here.
+  //   * CommandCloseTab closes the whole multi-selection; CommandCloseOtherTabs
+  //   and
+  //     CommandCloseTabsToRight walk the GLOBAL model order;
+  //     CommandCloseAllTabs (web-app windows) also walks it. All four can reach
+  //     tabs of other environments, which are hidden from the strip.
   //
   // The close itself still runs through ExecuteCloseCommandWithVictims(), which
   // keeps Chromium's own group bookkeeping, unload handling and historical-tab
@@ -1192,28 +1402,31 @@ void BrowserTabStripController::ExecuteContextMenuCommand(
                                                         command_id);
 
   switch (plan.disposition) {
-    case parra::EnvironmentTabOperations::CloseCommandDisposition::kNotACloseCommand:
+    case parra::EnvironmentTabOperations::CloseCommandDisposition::
+        kNotACloseCommand:
       break;  // fall through to the native path below
 
-    case parra::EnvironmentTabOperations::CloseCommandDisposition::kCloseVictims:
+    case parra::EnvironmentTabOperations::CloseCommandDisposition::
+        kCloseVictims:
       if (model_->ExecuteCloseCommandWithVictims(context_index, command_id,
                                                  plan.victims)) {
         return;
       }
-      // The command was a close command but the model refused to execute it with an
-      // explicit victim list. Do NOT fall back to the native path: that would use a
-      // victim set Parra never approved.
-      LOG(ERROR) << "parra: close command " << static_cast<int>(command_id)
-                 << " could not be executed with an explicit victim list; "
-                    "aborting instead of falling back to the native global close";
+      // The command was a close command but the model refused to execute it
+      // with an explicit victim list. Do NOT fall back to the native path: that
+      // would use a victim set Parra never approved.
+      LOG(ERROR)
+          << "parra: close command " << static_cast<int>(command_id)
+          << " could not be executed with an explicit victim list; "
+             "aborting instead of falling back to the native global close";
       return;
 
     case parra::EnvironmentTabOperations::CloseCommandDisposition::kRefuse:
-      // Refused. Narrow a leaking multi-selection so the state is left consistent,
-      // then do nothing. No close, no native fallback.
+      // Refused. Narrow a leaking multi-selection so the state is left
+      // consistent, then do nothing. No close, no native fallback.
       LOG(WARNING) << "parra: refusing close command "
-                   << static_cast<int>(command_id) << " on tab g" << context_index
-                   << ": " << plan.reason
+                   << static_cast<int>(command_id) << " on tab g"
+                   << context_index << ": " << plan.reason
                    << ". Nothing will be closed; this is deliberate, not a "
                       "fallback.";
       parra::EnvironmentTabOperations::ContainCloseCommandToActiveEnvironment(

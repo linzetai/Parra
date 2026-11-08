@@ -182,45 +182,85 @@ class BrowserTabStripController : public TabStripController,
   // Parra: per-window environment state. OWNED HERE.
   //
   // This controller is created once per browser window and destroyed with that
-  // window's tab strip, which is exactly the lifetime the environment state needs:
-  // long enough to outlive any tab-close callback during teardown, and short
-  // enough that nothing survives its window. See window_environment_state.h for
-  // why the object must NOT be self-deleting from BrowserDidClose.
+  // window's tab strip, which is exactly the lifetime the environment state
+  // needs: long enough to outlive any tab-close callback during teardown, and
+  // short enough that nothing survives its window. See
+  // window_environment_state.h for why the object must NOT be self-deleting
+  // from BrowserDidClose.
   std::unique_ptr<parra::WindowEnvironmentState> parra_window_state_;
+
+  // Parra: subscription to "this window's active environment changed".
+  //
+  // Held as a member so it unregisters when the controller is destroyed: a
+  // window closed while a switch is in flight cannot call back into a dead tab
+  // strip. This is the mechanism that makes a programmatic switch re-lay out
+  // the strip immediately, instead of waiting for some later selection change
+  // (the bug in docs/parra/93 §2.2).
+  base::CallbackListSubscription parra_environment_changed_subscription_;
 
   // Recomputes tab visibility after the active environment changed and
   // re-lays out the strip. Kept as one function so the "switch environment"
   // path cannot forget one of the two steps.
   void ApplyEnvironmentFilter();
 
-  // If the model's active tab belongs to an environment other than this window's
-  // active environment, adopt that environment for this window.
+  // If the model's active tab belongs to an environment other than this
+  // window's active environment, adopt that environment for this window.
   //
-  // This is the single coordination point for every native Chromium path that can
-  // change the active tab without consulting Parra: Ctrl+Tab, Ctrl+Shift+Tab,
-  // Ctrl+1..9, browser commands, bookmarks, session restore. It runs from the model
-  // observer, so it covers all of them at once instead of patching each command.
+  // This is the single coordination point for every native Chromium path that
+  // can change the active tab without consulting Parra: Ctrl+Tab,
+  // Ctrl+Shift+Tab, Ctrl+1..9, browser commands, bookmarks, session restore. It
+  // runs from the model observer, so it covers all of them at once instead of
+  // patching each command.
   //
-  // Adopting (rather than refusing) is deliberate: by the time the observer runs the
-  // activation has already happened, so refusing would mean undoing a user action.
+  // Adopting (rather than refusing) is deliberate: by the time the observer
+  // runs the activation has already happened, so refusing would mean undoing a
+  // user action.
   void AdoptActiveTabEnvironment();
 
-  // True while AdoptActiveTabEnvironment() is changing the environment. Prevents
-  // the resulting notifications from re-entering and ping-ponging between tabs.
+  // Called when this window's active environment changed, by ANY cause: the
+  // environment switcher, session restore, or a native activation that adopted
+  // a foreign tab.
+  //
+  // Re-applies the filter so the strip matches the content area immediately,
+  // instead of waiting for an unrelated selection change.
+  void OnActiveEnvironmentChanged();
+
+  // Makes sure the window's active environment has at least one tab.
+  //
+  // Chromium cannot have a tab strip with zero tabs, so "switch to an
+  // environment that has no tabs" would otherwise leave the previously active
+  // tab -- which belongs to a DIFFERENT environment -- attached to the content
+  // view, rendering that environment's page and holding its document focus.
+  // Creating the tab is the only way to honour the switch without exposing
+  // foreign content.
+  //
+  // Lives here rather than in EnvironmentVisibilityController because only this
+  // layer may call chrome::NewTab(), which is the one path that carries the
+  // intended environment id. See the definition for the full argument.
+  void EnsureActiveEnvironmentHasTab();
+
+  // True while EnsureActiveEnvironmentHasTab() is creating a tab, so the
+  // activation notification that chrome::NewTab() causes does not recurse.
+  bool parra_creating_empty_environment_tab_ = false;
+
+  // True while AdoptActiveTabEnvironment() is changing the environment.
+  // Prevents the resulting notifications from re-entering and ping-ponging
+  // between tabs.
   bool parra_adopting_active_tab_ = false;
 
  public:
   // Re-applies the environment filter if the active environment changed since
   // the last time it was applied. Safe to call at any time and cheap when
-  // nothing changed; this is what the environment switcher calls after a switch.
+  // nothing changed; this is what the environment switcher calls after a
+  // switch.
   void SyncEnvironmentFilterIfStale();
 
   // Emits a PARRA-UI snapshot of which model indices the filter reports as
   // visible, plus a cross-check of what the view layer actually shows.
   //
-  // The cross-check matters: a filter that answers correctly but whose answer is
-  // not honoured by the layout would look perfect in logs that only print the
-  // filter's own opinion.
+  // The cross-check matters: a filter that answers correctly but whose answer
+  // is not honoured by the layout would look perfect in logs that only print
+  // the filter's own opinion.
   void LogVisibilitySnapshot(const char* reason) const;
 
  private:

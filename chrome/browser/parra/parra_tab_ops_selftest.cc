@@ -47,14 +47,16 @@ int g_failures = 0;
 
 void Report(bool ok, const std::string& test, const std::string& detail) {
   ++g_checks;
-  if (!ok)
+  if (!ok) {
     ++g_failures;
+  }
   LOG(INFO) << "PARRA-TABOPS " << (ok ? "PASS" : "FAIL") << " " << test << " | "
             << detail;
 }
 
 std::string Token(content::WebContents* contents) {
-  return contents ? contents->GetUniqueToken().ToString() : std::string("<null>");
+  return contents ? contents->GetUniqueToken().ToString()
+                  : std::string("<null>");
 }
 
 // The environment a tab is tagged with, or "" when it carries no tag.
@@ -63,8 +65,9 @@ std::string EnvironmentOfTab(content::WebContents* contents) {
 }
 
 // The model index currently holding the tab whose unique token is `token`, or
-// TabStripModel::kNoTab when that tab is no longer in the model. Used to prove that
-// a specific tab SURVIVED an operation rather than being replaced by a new one.
+// TabStripModel::kNoTab when that tab is no longer in the model. Used to prove
+// that a specific tab SURVIVED an operation rather than being replaced by a new
+// one.
 int FindByToken(TabStripModel* model, const std::string& token) {
   if (!model) {
     return TabStripModel::kNoTab;
@@ -81,21 +84,24 @@ int FindByToken(TabStripModel* model, const std::string& token) {
 std::string TextIds(const std::vector<std::string>& ids) {
   std::string out;
   for (size_t i = 0; i < ids.size(); ++i) {
-    if (i)
+    if (i) {
       out += ",";
+    }
     out += ids[i].substr(0, 8);
   }
   return "[" + out + "]";
 }
 
-// The environment a live tab's committed document actually runs in, read from the
-// SecurityPrincipal. Empty means the default partition.
+// The environment a live tab's committed document actually runs in, read from
+// the SecurityPrincipal. Empty means the default partition.
 std::string ActualPartitionEnvironment(content::WebContents* contents) {
-  if (!contents)
+  if (!contents) {
     return std::string();
+  }
   content::SiteInstance* site_instance = contents->GetSiteInstance();
-  if (!site_instance)
+  if (!site_instance) {
     return std::string();
+  }
   const std::string_view id = GetEnvironmentIdForStoragePartition(
       site_instance->GetSecurityPrincipal().GetStoragePartitionConfig());
   return id.empty() ? std::string(kDefaultEnvironmentId) : std::string(id);
@@ -125,8 +131,9 @@ std::vector<std::string> TokensOfEnvironment(TabStripModel* model,
   std::vector<std::string> tokens;
   for (int i = 0; i < model->count(); ++i) {
     content::WebContents* contents = model->GetWebContentsAt(i);
-    if (EnvironmentTag::Get(contents) == environment)
+    if (EnvironmentTag::Get(contents) == environment) {
       tokens.push_back(Token(contents));
+    }
   }
   return tokens;
 }
@@ -136,8 +143,9 @@ bool AllStillPresent(TabStripModel* model,
                      const std::vector<std::string>& expected,
                      std::vector<std::string>* missing) {
   std::vector<std::string> live;
-  for (int i = 0; i < model->count(); ++i)
+  for (int i = 0; i < model->count(); ++i) {
     live.push_back(Token(model->GetWebContentsAt(i)));
+  }
 
   bool all = true;
   for (const std::string& token : expected) {
@@ -150,8 +158,9 @@ bool AllStillPresent(TabStripModel* model,
     }
     if (!found) {
       all = false;
-      if (missing)
+      if (missing) {
         missing->push_back(token);
+      }
     }
   }
   return all;
@@ -183,13 +192,14 @@ class TabOpsSelfTest {
   void TestGroupStaysInsideOneEnvironment();
   // P0: closing a group must not destroy another environment's tabs.
   void TestCloseGroupDoesNotCrossEnvironments();
-  // P1: an empty victim set must REFUSE, never fall through to the global close.
+  // P1: an empty victim set must REFUSE, never fall through to the global
+  // close.
   void TestEmptyVictimSetRefuses();
   // P2: about:blank / empty-document creation must not be misread as Personal.
   void TestAboutBlankPartitionSemantics();
   // P1: the close policy must be enforced on the MODEL, so the keyboard
-  // accelerators (which call ExecuteContextMenuCommand() directly and never pass
-  // through BrowserTabStripController) cannot bypass it.
+  // accelerators (which call ExecuteContextMenuCommand() directly and never
+  // pass through BrowserTabStripController) cannot bypass it.
   void TestAcceleratorPathIsCovered();
 
   // Builds a group containing `indices` via the production API and returns it.
@@ -198,13 +208,13 @@ class TabOpsSelfTest {
   // Removes every group from the model so each test starts clean.
   void DissolveAllGroups();
 
-  // Restores a 3x3 layout so each test starts from a known state. Tabs are added
-  // through the native path with the partition pinned up front, exactly like the
-  // visibility PoC does.
+  // Restores a 3x3 layout so each test starts from a known state. Tabs are
+  // added through the native path with the partition pinned up front, exactly
+  // like the visibility PoC does.
   void EnsureThreeEnvironments();
   // Makes sure `environment` has at least `minimum` tabs, creating the missing
-  // ones in that environment's own partition. Returns false (after reporting) when
-  // it cannot.
+  // ones in that environment's own partition. Returns false (after reporting)
+  // when it cannot.
   bool EnsureEnvironmentHasTabs(const std::string& environment, int minimum);
   void CloseAll();
 
@@ -218,8 +228,9 @@ void TabOpsSelfTest::EnsureThreeEnvironments() {
   EnvironmentIndexMapper mapper(model_);
   const char* environments[] = {"personal", "test-a", "test-b"};
   for (const char* environment : environments) {
-    if (mapper.GetVisibleCount(environment) > 0)
+    if (mapper.GetEnvironmentTabCount(environment) > 0) {
       continue;
+    }
     LOG(WARNING) << "PARRA-TABOPS setup: environment '" << environment
                  << "' is empty; the test needs the 3x3 layout from "
                     "--parra-poc-visibility";
@@ -228,9 +239,10 @@ void TabOpsSelfTest::EnsureThreeEnvironments() {
 
 bool TabOpsSelfTest::EnsureEnvironmentHasTabs(const std::string& environment,
                                               int minimum) {
-  int have = mapper_.GetVisibleCount(environment);
-  if (have >= minimum)
+  int have = mapper_.GetEnvironmentTabCount(environment);
+  if (have >= minimum) {
     return true;
+  }
 
   const content::StoragePartitionConfig config =
       GetStoragePartitionConfigForEnvironment(profile_, environment);
@@ -247,12 +259,14 @@ bool TabOpsSelfTest::EnsureEnvironmentHasTabs(const std::string& environment,
       // empty-document scheme, so an about:blank SiteInstance ends up with the
       // DEFAULT StoragePartitionConfig in its SecurityPrincipal even though the
       // BrowsingInstance was pinned. The filler would then be tagged for an
-      // environment it is not actually in -- exactly the mismatch TagNewContents()
-      // exists to refuse. Using a real URL keeps the filler honest.
-      auto site_instance = content::SiteInstance::CreateForFixedStoragePartition(
-          profile_, GURL("https://sheet.test:8443/"), config);
-      content::WebContents::CreateParams create_params(profile_,
-                                                      std::move(site_instance));
+      // environment it is not actually in -- exactly the mismatch
+      // TagNewContents() exists to refuse. Using a real URL keeps the filler
+      // honest.
+      auto site_instance =
+          content::SiteInstance::CreateForFixedStoragePartition(
+              profile_, GURL("https://sheet.test:8443/"), config);
+      content::WebContents::CreateParams create_params(
+          profile_, std::move(site_instance));
       contents = content::WebContents::Create(create_params);
     }
     if (!contents) {
@@ -261,8 +275,8 @@ bool TabOpsSelfTest::EnsureEnvironmentHasTabs(const std::string& environment,
       return false;
     }
 
-    // Tag through the real router so the same tag/partition invariant applies to
-    // test fixtures as to production tabs.
+    // Tag through the real router so the same tag/partition invariant applies
+    // to test fixtures as to production tabs.
     ResolvedTabEnvironment resolved;
     resolved.active = true;
     resolved.environment_id = environment;
@@ -276,7 +290,8 @@ bool TabOpsSelfTest::EnsureEnvironmentHasTabs(const std::string& environment,
     }
 
     // ADD_NONE: insert in the background. The filler must not steal activation
-    // from the tab under test, and the environment is activated explicitly below.
+    // from the tab under test, and the environment is activated explicitly
+    // below.
     model_->AddWebContents(std::move(contents), -1, ui::PAGE_TRANSITION_TYPED,
                            AddTabTypes::ADD_NONE);
     ++have;
@@ -293,8 +308,9 @@ void TabOpsSelfTest::CloseAll() {
   while (model_->count() > 0) {
     content::WebContents* contents = model_->GetWebContentsAt(0);
     model_->CloseWebContentsAt(0, TabCloseTypes::CLOSE_NONE);
-    if (model_->GetWebContentsAt(0) == contents)
+    if (model_->GetWebContentsAt(0) == contents) {
       break;  // unload handler refused; do not spin
+    }
   }
 }
 
@@ -305,8 +321,8 @@ void TabOpsSelfTest::TestTagMatchesPartition() {
   for (const Row& row : rows) {
     if (row.tag != row.actual) {
       ++mismatched;
-      detail += " g" + base::NumberToString(row.index) + ":" + row.tag + "!=" +
-                row.actual;
+      detail += " g" + base::NumberToString(row.index) + ":" + row.tag +
+                "!=" + row.actual;
     }
   }
   Report(mismatched == 0, "P2-tag-equals-actual-partition",
@@ -315,11 +331,13 @@ void TabOpsSelfTest::TestTagMatchesPartition() {
 }
 
 void TabOpsSelfTest::TestCloseOtherTabs() {
-  // Needs at least two tabs in test-a. Earlier tests are destructive, so this one
-  // starts by restoring the layout it needs rather than assuming the 3x3 pristine
-  // state -- a test that silently skips is how a real regression hides.
-  if (!EnsureEnvironmentHasTabs("test-a", /*minimum=*/2))
+  // Needs at least two tabs in test-a. Earlier tests are destructive, so this
+  // one starts by restoring the layout it needs rather than assuming the 3x3
+  // pristine state -- a test that silently skips is how a real regression
+  // hides.
+  if (!EnsureEnvironmentHasTabs("test-a", /*minimum=*/2)) {
     return;
+  }
 
   const std::string target_environment = "test-a";
   const std::vector<int> visible =
@@ -335,8 +353,9 @@ void TabOpsSelfTest::TestCloseOtherTabs() {
   const std::vector<std::string> foreign_before = [&] {
     std::vector<std::string> tokens;
     for (const char* other : {"personal", "test-b"}) {
-      for (const std::string& t : TokensOfEnvironment(model_, other))
+      for (const std::string& t : TokensOfEnvironment(model_, other)) {
         tokens.push_back(t);
+      }
     }
     return tokens;
   }();
@@ -353,13 +372,14 @@ void TabOpsSelfTest::TestCloseOtherTabs() {
          base::NumberToString(victims.size()) + " victim(s) inside '" +
              target_environment + "'");
 
-  // Every resolved victim must belong to the target environment. This is checked
-  // on the victim set itself, before anything is closed.
+  // Every resolved victim must belong to the target environment. This is
+  // checked on the victim set itself, before anything is closed.
   int foreign_victims = 0;
   for (tabs::TabHandle handle : victims) {
     tabs::TabInterface* tab = handle.Get();
-    if (tab && EnvironmentTag::Get(tab->GetContents()) != target_environment)
+    if (tab && EnvironmentTag::Get(tab->GetContents()) != target_environment) {
       ++foreign_victims;
+    }
   }
   Report(foreign_victims == 0, "P1-close-other-tabs-no-foreign-victim",
          base::NumberToString(foreign_victims) + " victim(s) outside '" +
@@ -373,35 +393,38 @@ void TabOpsSelfTest::TestCloseOtherTabs() {
 
   std::vector<std::string> missing;
   const bool foreign_intact = AllStillPresent(model_, foreign_before, &missing);
-  Report(foreign_intact, "P1-close-other-tabs-foreign-intact",
-         base::NumberToString(foreign_before.size()) + " foreign tab(s) before, " +
-             (foreign_intact ? "all still alive"
-                             : "missing " + TextIds(missing)));
+  Report(
+      foreign_intact, "P1-close-other-tabs-foreign-intact",
+      base::NumberToString(foreign_before.size()) + " foreign tab(s) before, " +
+          (foreign_intact ? "all still alive" : "missing " + TextIds(missing)));
 
   // The context tab must survive: "close OTHER tabs".
   bool kept_alive = false;
   for (int i = 0; i < model_->count(); ++i) {
-    if (Token(model_->GetWebContentsAt(i)) == kept_token)
+    if (Token(model_->GetWebContentsAt(i)) == kept_token) {
       kept_alive = true;
+    }
   }
   Report(kept_alive, "P1-close-other-tabs-context-survives",
          "token " + kept_token.substr(0, 8));
 
   // And the environment should now hold only the context tab.
-  Report(mapper_.GetVisibleCount(target_environment) == 1,
-         "P1-close-other-tabs-only-context-left",
-         base::NumberToString(mapper_.GetVisibleCount(target_environment)) +
-             " tab(s) left in '" + target_environment + "' (was " +
-             base::NumberToString(own_before.size()) + ")");
+  Report(
+      mapper_.GetEnvironmentTabCount(target_environment) == 1,
+      "P1-close-other-tabs-only-context-left",
+      base::NumberToString(mapper_.GetEnvironmentTabCount(target_environment)) +
+          " tab(s) left in '" + target_environment + "' (was " +
+          base::NumberToString(own_before.size()) + ")");
 }
 
 void TabOpsSelfTest::TestCloseTabsToRight() {
-  // Earlier tests are destructive (group close removes its members), so restore the
-  // layout this test needs instead of depending on the pristine 3x3. A test that
-  // silently degrades to a FAIL because of test ordering is a broken test, not a
-  // product finding.
-  if (!EnsureEnvironmentHasTabs("test-a", /*minimum=*/3))
+  // Earlier tests are destructive (group close removes its members), so restore
+  // the layout this test needs instead of depending on the pristine 3x3. A test
+  // that silently degrades to a FAIL because of test ordering is a broken test,
+  // not a product finding.
+  if (!EnsureEnvironmentHasTabs("test-a", /*minimum=*/3)) {
     return;
+  }
 
   const std::vector<int> before_visible =
       mapper_.GetVisibleGlobalIndices("test-a");
@@ -414,22 +437,25 @@ void TabOpsSelfTest::TestCloseTabsToRight() {
 
   mapper_.SetActiveEnvironment("test-a");
 
-  // Context = the FIRST visible test-a tab. Everything the user sees to its right
-  // inside test-a must close; every foreign tab must survive.
+  // Context = the FIRST visible test-a tab. Everything the user sees to its
+  // right inside test-a must close; every foreign tab must survive.
   const int context_index = before_visible[0];
 
   std::vector<std::string> foreign_before;
   for (int i = 0; i < model_->count(); ++i) {
     content::WebContents* contents = model_->GetWebContentsAt(i);
-    if (EnvironmentTag::Get(contents) != "test-a")
+    if (EnvironmentTag::Get(contents) != "test-a") {
       foreign_before.push_back(Token(contents));
+    }
   }
 
   const std::vector<std::string> own_after_expected = [&] {
     std::vector<std::string> tokens;
-    // Visible test-a tabs strictly to the right of the context in VISIBLE order.
-    for (size_t i = 1; i < before_visible.size(); ++i)
+    // Visible test-a tabs strictly to the right of the context in VISIBLE
+    // order.
+    for (size_t i = 1; i < before_visible.size(); ++i) {
       tokens.push_back(Token(model_->GetWebContentsAt(before_visible[i])));
+    }
     return tokens;
   }();
 
@@ -447,8 +473,9 @@ void TabOpsSelfTest::TestCloseTabsToRight() {
   int foreign_victims = 0;
   for (tabs::TabHandle handle : victims) {
     tabs::TabInterface* tab = handle.Get();
-    if (tab && EnvironmentTag::Get(tab->GetContents()) != "test-a")
+    if (tab && EnvironmentTag::Get(tab->GetContents()) != "test-a") {
       ++foreign_victims;
+    }
   }
   Report(foreign_victims == 0, "P1-close-right-no-foreign-victim",
          base::NumberToString(foreign_victims) + " victim(s) outside test-a");
@@ -460,10 +487,10 @@ void TabOpsSelfTest::TestCloseTabsToRight() {
 
   std::vector<std::string> missing;
   const bool foreign_intact = AllStillPresent(model_, foreign_before, &missing);
-  Report(foreign_intact, "P1-close-right-foreign-intact",
-         base::NumberToString(foreign_before.size()) + " foreign tab(s) before, " +
-             (foreign_intact ? "all still alive"
-                             : "missing " + TextIds(missing)));
+  Report(
+      foreign_intact, "P1-close-right-foreign-intact",
+      base::NumberToString(foreign_before.size()) + " foreign tab(s) before, " +
+          (foreign_intact ? "all still alive" : "missing " + TextIds(missing)));
 }
 
 void TabOpsSelfTest::TestCrossEnvironmentMultiSelect() {
@@ -481,13 +508,14 @@ void TabOpsSelfTest::TestCrossEnvironmentMultiSelect() {
 
   const std::string foreign_token = Token(model_->GetWebContentsAt(test_b[0]));
 
-  // A cross-environment multi-selection cannot be built through the public model
-  // API (selection_model() is const, and the UI's shift-click path is not callable
-  // from here). Rather than fake the selection, verify the CONTAINMENT RULE on the
-  // input the command would actually see: take Chromium's own candidate set for
-  // CommandCloseTab and confirm the filter keeps only this environment's tabs.
-  std::vector<tabs::TabHandle> candidates =
-      model_->GetCloseCommandCandidates(test_a[0], TabStripModel::CommandCloseTab);
+  // A cross-environment multi-selection cannot be built through the public
+  // model API (selection_model() is const, and the UI's shift-click path is not
+  // callable from here). Rather than fake the selection, verify the CONTAINMENT
+  // RULE on the input the command would actually see: take Chromium's own
+  // candidate set for CommandCloseTab and confirm the filter keeps only this
+  // environment's tabs.
+  std::vector<tabs::TabHandle> candidates = model_->GetCloseCommandCandidates(
+      test_a[0], TabStripModel::CommandCloseTab);
   Report(!candidates.empty(), "P1-multiselect-candidates",
          base::NumberToString(candidates.size()) +
              " native candidate(s) for the multi-select close");
@@ -499,20 +527,19 @@ void TabOpsSelfTest::TestCrossEnvironmentMultiSelect() {
   int foreign_victims = 0;
   for (tabs::TabHandle handle : victims) {
     tabs::TabInterface* tab = handle.Get();
-    if (tab && EnvironmentTag::Get(tab->GetContents()) != "test-a")
+    if (tab && EnvironmentTag::Get(tab->GetContents()) != "test-a") {
       ++foreign_victims;
+    }
   }
   Report(foreign_victims == 0, "P1-multiselect-no-foreign-victim",
          base::NumberToString(foreign_victims) + " victim(s) outside test-a");
-  Report(resolved && victims.size() == 1,
-         "P1-multiselect-only-own-tab",
+  Report(resolved && victims.size() == 1, "P1-multiselect-only-own-tab",
          base::NumberToString(victims.size()) +
              " victim(s); expected exactly the test-a context tab");
 
   if (browser_ && resolved) {
-    model_->ExecuteCloseCommandWithVictims(test_a[0],
-                                           TabStripModel::CommandCloseTab,
-                                           victims);
+    model_->ExecuteCloseCommandWithVictims(
+        test_a[0], TabStripModel::CommandCloseTab, victims);
   }
 
   // Whatever the close did, the test-b tab must still be alive.
@@ -526,12 +553,12 @@ void TabOpsSelfTest::TestCrossEnvironmentMultiSelect() {
 void TabOpsSelfTest::TestRequestedEnvironmentRejected() {
   // P2 NEGATIVE CASE.
   //
-  // Ask for an environment that is not configured. The router must refuse with a
-  // diagnosable failure instead of silently creating the tab in Personal.
+  // Ask for an environment that is not configured. The router must refuse with
+  // a diagnosable failure instead of silently creating the tab in Personal.
   {
     const ResolvedTabEnvironment resolved =
-        EnvironmentTabRouter::ResolveForNewTab(profile_, /*source_contents=*/nullptr,
-                                              "no-such-environment");
+        EnvironmentTabRouter::ResolveForNewTab(
+            profile_, /*source_contents=*/nullptr, "no-such-environment");
     Report(resolved.active && !resolved.ok(),
            "P2-unknown-requested-env-rejected",
            "active=" + std::string(resolved.active ? "yes" : "no") +
@@ -541,12 +568,12 @@ void TabOpsSelfTest::TestRequestedEnvironmentRejected() {
            "failure text: '" + resolved.failure + "'");
   }
 
-  // A configured environment must still resolve cleanly, so the refusal above is
-  // specific to a bad request and not a blanket rejection.
+  // A configured environment must still resolve cleanly, so the refusal above
+  // is specific to a bad request and not a blanket rejection.
   {
     const ResolvedTabEnvironment resolved =
-        EnvironmentTabRouter::ResolveForNewTab(profile_, /*source_contents=*/nullptr,
-                                              "test-a");
+        EnvironmentTabRouter::ResolveForNewTab(
+            profile_, /*source_contents=*/nullptr, "test-a");
     Report(resolved.ok(), "P2-known-requested-env-accepted",
            "env='" + resolved.environment_id + "' origin=" +
                base::NumberToString(static_cast<int>(resolved.origin)));
@@ -554,12 +581,13 @@ void TabOpsSelfTest::TestRequestedEnvironmentRejected() {
            "P2-known-requested-env-honored", resolved.environment_id);
   }
 
-  // And an explicitly requested environment must not be silently replaced by the
-  // default environment: this is the "no silent downgrade to Personal" rule.
+  // And an explicitly requested environment must not be silently replaced by
+  // the default environment: this is the "no silent downgrade to Personal"
+  // rule.
   {
     const ResolvedTabEnvironment resolved =
-        EnvironmentTabRouter::ResolveForNewTab(profile_, /*source_contents=*/nullptr,
-                                              "test-b");
+        EnvironmentTabRouter::ResolveForNewTab(
+            profile_, /*source_contents=*/nullptr, "test-b");
     Report(resolved.ok() && resolved.environment_id == "test-b",
            "P2-requested-env-not-downgraded",
            "requested='test-b' resolved='" + resolved.environment_id + "'");
@@ -569,8 +597,8 @@ void TabOpsSelfTest::TestRequestedEnvironmentRejected() {
 void TabOpsSelfTest::TestDuplicateTab() {
   // Duplicate Tab goes through WebContents::Clone(), which reuses the source
   // SiteInstance (so the partition is inherited by construction) but copies NO
-  // UserData -- which is where EnvironmentTag lives. The bug this guards against
-  // is therefore "right partition, wrong tag", not "wrong partition".
+  // UserData -- which is where EnvironmentTag lives. The bug this guards
+  // against is therefore "right partition, wrong tag", not "wrong partition".
   const std::vector<int> visible = mapper_.GetVisibleGlobalIndices("test-b");
   if (visible.empty()) {
     Report(false, "P4-duplicate-precondition", "test-b has no tabs");
@@ -595,8 +623,9 @@ void TabOpsSelfTest::TestDuplicateTab() {
          base::NumberToString(before_count) + " -> " +
              base::NumberToString(model_->count()));
 
-  if (model_->count() != static_cast<int>(before_count) + 1)
+  if (model_->count() != static_cast<int>(before_count) + 1) {
     return;
+  }
 
   // The clone is inserted immediately right of the source.
   content::WebContents* clone = model_->GetWebContentsAt(source_index + 1);
@@ -620,29 +649,34 @@ void TabOpsSelfTest::TestDuplicateTab() {
 }
 
 void TabOpsSelfTest::DissolveAllGroups() {
-  if (!model_->group_model())
+  if (!model_->group_model()) {
     return;
+  }
   // Collect first: RemoveFromGroup mutates the group list.
   std::vector<tab_groups::TabGroupId> groups =
       model_->group_model()->ListTabGroups();
   for (const tab_groups::TabGroupId& group : groups) {
-    if (!model_->group_model()->ContainsTabGroup(group))
+    if (!model_->group_model()->ContainsTabGroup(group)) {
       continue;
+    }
     std::vector<int> members;
     for (int index :
          model_->group_model()->GetTabGroup(group)->ListTabs().ToIntVector()) {
-      if (model_->ContainsIndex(index))
+      if (model_->ContainsIndex(index)) {
         members.push_back(index);
+      }
     }
-    if (!members.empty())
+    if (!members.empty()) {
       model_->RemoveFromGroup(members);
+    }
   }
 }
 
 std::optional<tab_groups::TabGroupId> TabOpsSelfTest::MakeGroup(
     const std::vector<int>& indices) {
-  if (indices.size() < 2)
+  if (indices.size() < 2) {
     return std::nullopt;
+  }
   // AddToNewGroup() returns a fresh id even when an embedder policy vetoes the
   // call, so "created" must be judged by whether the members actually carry the
   // group, not by the return value.
@@ -667,7 +701,8 @@ void TabOpsSelfTest::TestGroupStaysInsideOneEnvironment() {
 
   mapper_.SetActiveEnvironment("test-a");
 
-  // (a) Same-environment grouping must still work: the policy must not be a blanket
+  // (a) Same-environment grouping must still work: the policy must not be a
+  // blanket
   //     ban, otherwise the test below would pass for the wrong reason.
   const std::optional<tab_groups::TabGroupId> same_env_group =
       MakeGroup({test_a[0], test_a[1]});
@@ -675,8 +710,9 @@ void TabOpsSelfTest::TestGroupStaysInsideOneEnvironment() {
          same_env_group ? "group created inside 'test-a'"
                         : "group creation was vetoed (policy too strict)");
 
-  if (!same_env_group.has_value())
+  if (!same_env_group.has_value()) {
     return;
+  }
 
   // (b) The group's environment must be resolvable and equal to test-a.
   const std::string group_env =
@@ -685,7 +721,8 @@ void TabOpsSelfTest::TestGroupStaysInsideOneEnvironment() {
          "EnvironmentOfGroup()='" + group_env + "'");
 
   // (c) Adding a test-b tab to a test-a group must be VETOED.
-  const std::vector<int> before_test_b = mapper_.GetVisibleGlobalIndices("test-b");
+  const std::vector<int> before_test_b =
+      mapper_.GetVisibleGlobalIndices("test-b");
   const std::string foreign_token =
       Token(model_->GetWebContentsAt(before_test_b[0]));
 
@@ -699,19 +736,19 @@ void TabOpsSelfTest::TestGroupStaysInsideOneEnvironment() {
       break;
     }
   }
-  Report(!foreign_group.has_value(),
-         "P0-cross-env-add-to-group-vetoed",
-         foreign_group ? "the test-b tab JOINED the test-a group (policy failed)"
-                       : "the test-b tab stayed ungrouped; token still alive");
+  Report(!foreign_group.has_value(), "P0-cross-env-add-to-group-vetoed",
+         foreign_group
+             ? "the test-b tab JOINED the test-a group (policy failed)"
+             : "the test-b tab stayed ungrouped; token still alive");
 
   // (d) The group must still span exactly one environment.
-  Report(EnvironmentTabOperations::GroupSpansEnvironments(model_,
-                                                          *same_env_group) ==
-             false,
+  Report(EnvironmentTabOperations::GroupSpansEnvironments(
+             model_, *same_env_group) == false,
          "P0-group-does-not-span-environments",
          "GroupSpansEnvironments() == false");
 
-  // (e) Creating a NEW group out of tabs from two environments must also be vetoed.
+  // (e) Creating a NEW group out of tabs from two environments must also be
+  // vetoed.
   const std::vector<int> test_a_now = mapper_.GetVisibleGlobalIndices("test-a");
   const int a_index = test_a_now.empty() ? -1 : test_a_now.front();
   const int b_index = before_test_b[0];
@@ -723,11 +760,12 @@ void TabOpsSelfTest::TestGroupStaysInsideOneEnvironment() {
         model_->GetTabGroupForTab(a_index);
     const std::optional<tab_groups::TabGroupId> b_group =
         model_->GetTabGroupForTab(b_index);
-    Report(!(a_group.has_value() && b_group.has_value() && *a_group == *b_group),
-           "P0-cross-env-new-group-vetoed",
-           a_group && b_group && *a_group == *b_group
-               ? "a mixed group was created (policy failed)"
-               : "no group was created across environments");
+    Report(
+        !(a_group.has_value() && b_group.has_value() && *a_group == *b_group),
+        "P0-cross-env-new-group-vetoed",
+        a_group && b_group && *a_group == *b_group
+            ? "a mixed group was created (policy failed)"
+            : "no group was created across environments");
   }
 }
 
@@ -751,8 +789,9 @@ void TabOpsSelfTest::TestCloseGroupDoesNotCrossEnvironments() {
   // Record every OTHER environment's tokens: none may be destroyed.
   std::vector<std::string> foreign_before;
   for (const char* other : {"personal", "test-b"}) {
-    for (const std::string& t : TokensOfEnvironment(model_, other))
+    for (const std::string& t : TokensOfEnvironment(model_, other)) {
       foreign_before.push_back(t);
+    }
   }
 
   const bool closed =
@@ -769,25 +808,27 @@ void TabOpsSelfTest::TestCloseGroupDoesNotCrossEnvironments() {
                               : "MISSING " + TextIds(missing)));
 
   // The group is gone: its members were closed.
-  Report(!model_->group_model() || !model_->group_model()->ContainsTabGroup(*group),
+  Report(!model_->group_model() ||
+             !model_->group_model()->ContainsTabGroup(*group),
          "P0-close-group-removed", "the group no longer exists");
 }
 
 void TabOpsSelfTest::TestEmptyVictimSetRefuses() {
   // P1: the crucial containment property. A close command whose environment has
   // nothing to close must REFUSE. Before this round the caller could not tell
-  // "not a close command" from "refused", so it fell through to Chromium's global
-  // close -- silently widening the operation to every environment.
+  // "not a close command" from "refused", so it fell through to Chromium's
+  // global close -- silently widening the operation to every environment.
   //
   // Construct the exact state: the context tab is in an environment, and that
   // environment has no other tab, so Close Other Tabs has an empty victim set.
   DissolveAllGroups();
 
   // Drain test-b down to a single tab.
-  while (mapper_.GetVisibleCount("test-b") > 1) {
+  while (mapper_.GetEnvironmentTabCount("test-b") > 1) {
     const std::vector<int> visible = mapper_.GetVisibleGlobalIndices("test-b");
-    if (visible.empty())
+    if (visible.empty()) {
       break;
+    }
     const int last = visible.back();
     content::WebContents* contents = model_->GetWebContentsAt(last);
     model_->CloseWebContentsAt(last, TabCloseTypes::CLOSE_NONE);
@@ -807,19 +848,20 @@ void TabOpsSelfTest::TestEmptyVictimSetRefuses() {
 
   mapper_.SetActiveEnvironment("test-b");
   const int context_index = remaining[0];
-  const std::string context_token = Token(model_->GetWebContentsAt(context_index));
+  const std::string context_token =
+      Token(model_->GetWebContentsAt(context_index));
 
   const auto plan = EnvironmentTabOperations::PlanCloseCommand(
       model_, context_index, TabStripModel::CommandCloseOtherTabs);
   Report(plan.disposition ==
              EnvironmentTabOperations::CloseCommandDisposition::kRefuse,
          "P1-empty-victims-refused",
-         "disposition=" + base::NumberToString(
-                              static_cast<int>(plan.disposition)) +
+         "disposition=" +
+             base::NumberToString(static_cast<int>(plan.disposition)) +
              " reason='" + plan.reason + "'");
 
-  // A refusal must NOT be reported as "not a close command" -- that is what would
-  // let the caller run the native path.
+  // A refusal must NOT be reported as "not a close command" -- that is what
+  // would let the caller run the native path.
   Report(plan.is_close_command(), "P1-refusal-is-not-a-fallthrough",
          "is_close_command() == true, so the caller cannot delegate");
 
@@ -832,23 +874,25 @@ void TabOpsSelfTest::TestEmptyVictimSetRefuses() {
   // menu items keep working.
   const auto other = EnvironmentTabOperations::PlanCloseCommand(
       model_, context_index, TabStripModel::CommandReload);
-  Report(other.disposition ==
-             EnvironmentTabOperations::CloseCommandDisposition::kNotACloseCommand,
-         "P1-non-close-command-passes-through",
-         "CommandReload is not treated as a close command");
+  Report(
+      other.disposition ==
+          EnvironmentTabOperations::CloseCommandDisposition::kNotACloseCommand,
+      "P1-non-close-command-passes-through",
+      "CommandReload is not treated as a close command");
 }
 
 void TabOpsSelfTest::TestAboutBlankPartitionSemantics() {
   // P2. THE REAL NEGATIVE CASE.
   //
   // A page created from about:blank for a non-default environment CANNOT be
-  // isolated: Chromium never assigns a site to an empty-document SiteInstance, so
-  // it never registers with its BrowsingInstance, so no StoragePartitionConfig is
-  // ever recorded for it and the first real navigation reads the DEFAULT partition.
+  // isolated: Chromium never assigns a site to an empty-document SiteInstance,
+  // so it never registers with its BrowsingInstance, so no
+  // StoragePartitionConfig is ever recorded for it and the first real
+  // navigation reads the DEFAULT partition.
   //
-  // Measured, before the fix: a blank page created for test-a committed its first
-  // HTTPS navigation in 'personal'. The fix is to REFUSE that creation path rather
-  // than let it silently land in the wrong environment.
+  // Measured, before the fix: a blank page created for test-a committed its
+  // first HTTPS navigation in 'personal'. The fix is to REFUSE that creation
+  // path rather than let it silently land in the wrong environment.
   //
   // This test therefore asserts the REFUSAL, not a successful binding.
   const content::StoragePartitionConfig config =
@@ -856,7 +900,8 @@ void TabOpsSelfTest::TestAboutBlankPartitionSemantics() {
 
   if (config.is_default()) {
     Report(false, "P2-about-blank-precondition",
-           "'test-a' maps to the default partition, so this case cannot be tested");
+           "'test-a' maps to the default partition, so this case cannot be "
+           "tested");
     return;
   }
 
@@ -883,11 +928,12 @@ void TabOpsSelfTest::TestAboutBlankPartitionSemantics() {
   // (c) Tagging a blank page is still allowed (the tag records intent), but the
   //     commit-check must not pretend to have verified anything.
   content::WebContents::CreateParams create_params(profile_,
-                                                  std::move(blank_instance));
+                                                   std::move(blank_instance));
   std::unique_ptr<content::WebContents> blank =
       content::WebContents::Create(create_params);
   if (!blank) {
-    Report(false, "P2-about-blank-created", "could not create a blank contents");
+    Report(false, "P2-about-blank-created",
+           "could not create a blank contents");
     return;
   }
 
@@ -902,21 +948,23 @@ void TabOpsSelfTest::TestAboutBlankPartitionSemantics() {
   Report(EnvironmentTag::Get(blank.get()) == "test-a",
          "P2-about-blank-tagged-test-a", EnvironmentTag::Get(blank.get()));
 
-  Report(EnvironmentTabRouter::TagMatchesCommittedPartition(blank.get(), nullptr,
-                                                           nullptr),
+  Report(EnvironmentTabRouter::TagMatchesCommittedPartition(blank.get(),
+                                                            nullptr, nullptr),
          "P2-about-blank-no-false-mismatch",
          "no committed document, so the commit-check is vacuously true");
 
-  // Do NOT navigate it: that is the path the browser now refuses, and navigating
-  // here would just reproduce the leak inside the test.
-  LOG(INFO) << "PARRA-TABOPS about-blank: not navigating, because navigation from a "
-               "site-unassigned instance is the refused path";
+  // Do NOT navigate it: that is the path the browser now refuses, and
+  // navigating here would just reproduce the leak inside the test.
+  LOG(INFO)
+      << "PARRA-TABOPS about-blank: not navigating, because navigation from a "
+         "site-unassigned instance is the refused path";
 
-  // (d) Drive the ACTUAL refusal in the real creation path, in this running browser.
+  // (d) Drive the ACTUAL refusal in the real creation path, in this running
+  // browser.
   //
-  // This is the "real negative case" the phase requires: a full Navigate() with an
-  // empty-document URL and an explicitly requested non-default environment must
-  // produce NO tab. Anything else would mean the page ended up somewhere.
+  // This is the "real negative case" the phase requires: a full Navigate() with
+  // an empty-document URL and an explicitly requested non-default environment
+  // must produce NO tab. Anything else would mean the page ended up somewhere.
   const int count_before = model_->count();
   NavigateParams params(browser_, GURL(url::kAboutBlankURL),
                         ui::PAGE_TRANSITION_TYPED);
@@ -925,14 +973,14 @@ void TabOpsSelfTest::TestAboutBlankPartitionSemantics() {
   Navigate(&params);
 
   const int count_after = model_->count();
-  Report(count_after == count_before,
-         "P2-about-blank-creation-refused",
+  Report(count_after == count_before, "P2-about-blank-creation-refused",
          "model count " + base::NumberToString(count_before) + " -> " +
              base::NumberToString(count_after) +
              "; no tab was created for an empty-document URL in 'test-a'");
 
-  // And the same creation for PERSONAL must still work, so the refusal is specific
-  // to the un-isolatable combination and not a blanket ban on about:blank.
+  // And the same creation for PERSONAL must still work, so the refusal is
+  // specific to the un-isolatable combination and not a blanket ban on
+  // about:blank.
   NavigateParams personal_params(browser_, GURL(url::kAboutBlankURL),
                                  ui::PAGE_TRANSITION_TYPED);
   personal_params.disposition = WindowOpenDisposition::kNewForegroundTab;
@@ -948,26 +996,29 @@ void TabOpsSelfTest::TestAboutBlankPartitionSemantics() {
   if (count_personal == count_after + 1) {
     // Clean the probe tab up so the following tests see the expected layout.
     const int probe_index = model_->active_index();
-    if (probe_index != TabStripModel::kNoTab)
+    if (probe_index != TabStripModel::kNoTab) {
       model_->CloseWebContentsAt(probe_index, TabCloseTypes::CLOSE_NONE);
+    }
   }
 }
 
 void TabOpsSelfTest::TestAcceleratorPathIsCovered() {
-  LOG(INFO) << "PARRA-TABOPS P1-accelerator: driving ExecuteContextMenuCommand() "
-               "directly, exactly as browser_commands.cc does for "
-               "IDC_CLOSE_OTHER_TABS / IDC_CLOSE_TABS_TO_RIGHT";
+  LOG(INFO)
+      << "PARRA-TABOPS P1-accelerator: driving ExecuteContextMenuCommand() "
+         "directly, exactly as browser_commands.cc does for "
+         "IDC_CLOSE_OTHER_TABS / IDC_CLOSE_TABS_TO_RIGHT";
   DissolveAllGroups();
 
   // This test exists because the accelerators do NOT go through
   // BrowserTabStripController::ExecuteContextMenuCommand(). They call
-  // TabStripModel::ExecuteContextMenuCommand() directly. If the containment lived
-  // only in the controller, these commands would silently close every other
-  // environment's hidden tabs. Driving the model method directly from here is
-  // therefore the same call shape the accelerator uses -- not a simulation of it.
+  // TabStripModel::ExecuteContextMenuCommand() directly. If the containment
+  // lived only in the controller, these commands would silently close every
+  // other environment's hidden tabs. Driving the model method directly from
+  // here is therefore the same call shape the accelerator uses -- not a
+  // simulation of it.
 
-  // Give 'test-a' enough tabs that Close Tabs To Right has real victims inside the
-  // environment, and record the foreign set beforehand.
+  // Give 'test-a' enough tabs that Close Tabs To Right has real victims inside
+  // the environment, and record the foreign set beforehand.
   EnsureEnvironmentHasTabs("test-a", 3);
   mapper_.SetActiveEnvironment("test-a");
 
@@ -988,8 +1039,8 @@ void TabOpsSelfTest::TestAcceleratorPathIsCovered() {
     }
   }
 
-  // Activate the FIRST visible tab so everything to its right (in visible order)
-  // becomes the victim set.
+  // Activate the FIRST visible tab so everything to its right (in visible
+  // order) becomes the victim set.
   const int context_index = visible.front();
   model_->ActivateTabAt(context_index);
   mapper_.SetActiveEnvironment("test-a");
@@ -1014,9 +1065,9 @@ void TabOpsSelfTest::TestAcceleratorPathIsCovered() {
              " foreign tab(s) still alive after a direct "
              "ExecuteContextMenuCommand(CommandCloseTabsToRight)");
 
-  // And the command must not have been a no-op either: the in-environment victims
-  // were closed, which proves the policy let an approved set through instead of
-  // blanket-refusing every accelerator close.
+  // And the command must not have been a no-op either: the in-environment
+  // victims were closed, which proves the policy let an approved set through
+  // instead of blanket-refusing every accelerator close.
   Report(model_->count() < before_count,
          "P1-accelerator-close-right-still-works",
          "model count " + base::NumberToString(before_count) + " -> " +
@@ -1029,7 +1080,7 @@ void TabOpsSelfTest::TestAcceleratorPathIsCovered() {
   // fallen through to the native global close.
   DissolveAllGroups();
   mapper_.SetActiveEnvironment("test-b");
-  while (mapper_.GetVisibleCount("test-b") > 1) {
+  while (mapper_.GetEnvironmentTabCount("test-b") > 1) {
     const std::vector<int> v = mapper_.GetVisibleGlobalIndices("test-b");
     if (v.empty()) {
       break;
@@ -1051,7 +1102,8 @@ void TabOpsSelfTest::TestAcceleratorPathIsCovered() {
   }
 
   const int lonely_index = lonely.front();
-  const std::string lonely_token = Token(model_->GetWebContentsAt(lonely_index));
+  const std::string lonely_token =
+      Token(model_->GetWebContentsAt(lonely_index));
   mapper_.SetActiveEnvironment("test-b");
   const int count_before_refusal = model_->count();
 
@@ -1097,8 +1149,8 @@ void TabOpsSelfTest::Run() {
   TestAboutBlankPartitionSemantics();
 
   // P1: an empty victim set must refuse instead of falling back. Destructive
-  // (drains an environment), so it runs before the close-command tests that need
-  // a full layout.
+  // (drains an environment), so it runs before the close-command tests that
+  // need a full layout.
   TestEmptyVictimSetRefuses();
 
   // P1: the close policy must be enforced on the MODEL so the keyboard
@@ -1113,10 +1165,10 @@ void TabOpsSelfTest::Run() {
 
   TestTagMatchesPartition();
 
-  // The about:blank sub-test schedules its commit check ~2s out, so the summary and
-  // browser shutdown must wait for it. Printing SUMMARY here would report a check
-  // count taken before those assertions ran -- which is how a failure would get
-  // silently dropped from the summary line.
+  // The about:blank sub-test schedules its commit check ~2s out, so the summary
+  // and browser shutdown must wait for it. Printing SUMMARY here would report a
+  // check count taken before those assertions ran -- which is how a failure
+  // would get silently dropped from the summary line.
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(
@@ -1134,8 +1186,9 @@ void TabOpsSelfTest::Run() {
             LOG(INFO) << "PARRA-TABOPS EXITING";
             BrowserWindowInterface* browser =
                 GetLastActiveBrowserWindowInterfaceWithAnyProfile();
-            if (browser)
+            if (browser) {
               browser->GetWindow()->Close();
+            }
           },
           model_, profile_),
       base::Seconds(4));

@@ -577,6 +577,32 @@ class NET_EXPORT HostResolver {
   // only be called once.
   virtual void SetRequestContext(URLRequestContext* request_context);
 
+  // Parra P3.4 PoC-1: replace the host mapping rules on a LIVE resolver.
+  //
+  // WHY THIS EXISTS: docs/parra/77 §B1 found that mapping rules are supplied
+  // only as part of NetworkContext creation params, and that MappedHostResolver
+  // -- which actually owns them -- is inserted ONLY when the initial rule
+  // string is non-empty (host_resolver.cc:425). There is therefore no way to
+  // move a running NetworkContext from "no mapping" to "mapped", which is
+  // exactly what the product needs when a user edits an environment's host
+  // mappings.
+  //
+  // Contract:
+  //  * Returns true when the rules were applied to a resolver that will be used
+  //  by
+  //    subsequent requests.
+  //  * Returns false when this resolver type cannot apply rules (the base
+  //    implementation). Callers MUST treat false as "not applied", never as
+  //    success -- the whole point of the PoC is to find out whether "request
+  //    accepted" can be distinguished from "actually in effect".
+  //  * Applying an EMPTY string means "no mapping", and must be supported as
+  //  well
+  //    (a user clearing the field is a real edit).
+  //  * Requests already in flight are not re-resolved; only later lookups use
+  //  the
+  //    new rules. Implementations must not block or discard existing sockets.
+  virtual bool SetHostMappingRules(std::string_view rules);
+
   // Returns true when HappyEyeballs V3 algorithm is enabled.
   virtual bool IsHappyEyeballsV3Enabled() const = 0;
 

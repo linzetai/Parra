@@ -27,7 +27,8 @@ extern const char kParraPocEnvironments[];
 // One entry per environment, matching order with kParraPocEnvironments.
 //
 // Format: a semicolon-separated list of net::HostMappingRules rule strings.
-//   --parra-poc-host-rules="map sheet.test 127.0.0.1:8443;map sheet.test 127.0.0.2:8444"
+//   --parra-poc-host-rules="map sheet.test 127.0.0.1:8443;map sheet.test
+//   127.0.0.2:8444"
 //
 // An empty entry (`;;`) means "no remapping for that environment".
 extern const char kParraPocHostRules[];
@@ -79,54 +80,56 @@ extern const char kParraPocNoInitialTabs[];
 //
 //   --parra-poc-selftest
 //
-// Mutates the tab strip (inserts, moves and closes scratch tabs), so it must not
-// be combined with a session-restore run that is being measured.
+// Mutates the tab strip (inserts, moves and closes scratch tabs), so it must
+// not be combined with a session-restore run that is being measured.
 extern const char kParraPocSelfTest[];
 
-// Phase 2.2B-2.1 tab-operation self-test: runs the close-command containment and
-// the creation-invariant checks described in docs/parra/43 and 44, then exits.
+// Phase 2.2B-2.1 tab-operation self-test: runs the close-command containment
+// and the creation-invariant checks described in docs/parra/43 and 44, then
+// exits.
 //
 //   --parra-poc-tabops-selftest
 //
-// Destroys tabs (that is the thing under test), so it must run alone. It needs the
-// 3x3 layout from --parra-poc-visibility.
+// Destroys tabs (that is the thing under test), so it must run alone. It needs
+// the 3x3 layout from --parra-poc-visibility.
 extern const char kParraPocTabOpsSelfTest[];
 
-// Phase 3 P3.1 safety self-test: verifies the fail-closed partition resolution and
-// the OTR partition invariant described in docs/parra/53 and 54.
+// Phase 3 P3.1 safety self-test: verifies the fail-closed partition resolution
+// and the OTR partition invariant described in docs/parra/53 and 54.
 //
 //   --parra-poc-p31-selftest
 //
 // Read-only with respect to the tab strip: it asks the resolver questions and
-// inspects the answers. It DOES construct a throwaway OTR profile to prove that an
-// incognito environment partition is in-memory, so it must run alone. No tab is
-// created, destroyed, moved or navigated.
+// inspects the answers. It DOES construct a throwaway OTR profile to prove that
+// an incognito environment partition is in-memory, so it must run alone. No tab
+// is created, destroyed, moved or navigated.
 //
 // Needs the 3x3 layout from --parra-poc-visibility so the resolver can be asked
 // about environments that really exist and about ones that do not.
 extern const char kParraPocP31SelfTest[];
 
-// Phase 3 P3.2 self-test: verifies the Profile-scoped EnvironmentStore -- the data
-// model, CRUD, persistence states, enable/disable semantics and the format rules
-// described in docs/parra/56.
+// Phase 3 P3.2 self-test: verifies the Profile-scoped EnvironmentStore -- the
+// data model, CRUD, persistence states, enable/disable semantics and the format
+// rules described in docs/parra/56.
 //
 //   --parra-poc-p32-selftest
 //
-// Creates and removes definitions in the profile's prefs, so it must run against a
-// throwaway profile and alone. It restores the ids it owns before exiting.
+// Creates and removes definitions in the profile's prefs, so it must run
+// against a throwaway profile and alone. It restores the ids it owns before
+// exiting.
 extern const char kParraPocP32SelfTest[];
 
 // Auxiliary P3.2 modes used to prove persistence ACROSS PROCESSES.
 //
 //   --parra-poc-p32-seed="<id>#<host rules>"
-//     Creates (or updates) one definition, flushes it to disk, logs SEED-DONE and
-//     exits. A single-process test could only prove that the in-memory map still
-//     holds what was just written; a second process is what proves the bytes
-//     reached the disk.
+//     Creates (or updates) one definition, flushes it to disk, logs SEED-DONE
+//     and exits. A single-process test could only prove that the in-memory map
+//     still holds what was just written; a second process is what proves the
+//     bytes reached the disk.
 //
 //   --parra-poc-p32-verify="<id>,<id>,..."
-//     Reads the listed ids back, asserts each exists, logs the stored order, the
-//     store's address, VERIFY-DONE, and exits.
+//     Reads the listed ids back, asserts each exists, logs the stored order,
+//     the store's address, VERIFY-DONE, and exits.
 //
 // Both need a throwaway profile and mutate it.
 extern const char kParraPocP32Seed[];
@@ -144,48 +147,50 @@ extern const char kParraPocP32Open[];
 //
 //   --parra-poc-p32-set-enabled="<id>#<0|1>"
 //
-// Needed because `enabled` is a per-Profile preference: proving that disabling in
-// profile A leaves profile B's identically-named environment working requires
-// two processes, each flipping its own profile, rather than one process holding
-// both Stores in memory (docs/parra/60 §4).
+// Needed because `enabled` is a per-Profile preference: proving that disabling
+// in profile A leaves profile B's identically-named environment working
+// requires two processes, each flipping its own profile, rather than one
+// process holding both Stores in memory (docs/parra/60 §4).
 extern const char kParraPocP32SetEnabled[];
 
 // Leaves the window on the named environment after the switch cycle finishes:
 //
 //   --parra-poc-final-environment="<id>"
 //
-// The cycle ends on the FIRST environment by construction (remaining_switches is
-// cycles * count, and the cursor wraps), so without this every run finishes on
-// `personal`. That makes the window-active-environment restore check vacuous:
-// restoring `personal` is indistinguishable from not restoring anything. This
-// switch exists so a test can leave the window on a NON-default environment and
-// then prove the value survives a restart.
+// The cycle ends on the FIRST environment by construction (remaining_switches
+// is cycles * count, and the cursor wraps), so without this every run finishes
+// on `personal`. That makes the window-active-environment restore check
+// vacuous: restoring `personal` is indistinguishable from not restoring
+// anything. This switch exists so a test can leave the window on a NON-default
+// environment and then prove the value survives a restart.
 extern const char kParraPocFinalEnvironment[];
 
 // Opens a real second browser window and parks it on the named environment:
 //
 //   --parra-poc-open-window="<env-id>#<url>"
 //
-// Exists because `--new-window` on an already-running instance does not reliably
-// produce a second session window (it gets forwarded to the existing process, and
-// the resulting window can share state), which made the earlier multi-window check
-// unable to observe two distinct windows. This goes through chrome::NewWindow(),
-// the same entry point the Ctrl+N accelerator uses, so the result is a genuine
-// Browser with its own TabStripModel, BrowserView and WindowEnvironmentState.
+// Exists because `--new-window` on an already-running instance does not
+// reliably produce a second session window (it gets forwarded to the existing
+// process, and the resulting window can share state), which made the earlier
+// multi-window check unable to observe two distinct windows. This goes through
+// chrome::NewWindow(), the same entry point the Ctrl+N accelerator uses, so the
+// result is a genuine Browser with its own TabStripModel, BrowserView and
+// WindowEnvironmentState.
 //
 // The named environment is applied to the NEW window only; other windows are
 // untouched. That is the property under test.
 extern const char kParraPocOpenWindow[];
 
-// Window lifetime stress test: opens and closes N windows in sequence and verifies
-// the WindowEnvironmentState count returns to its starting value after each close.
+// Window lifetime stress test: opens and closes N windows in sequence and
+// verifies the WindowEnvironmentState count returns to its starting value after
+// each close.
 //
 //   --parra-poc-window-stress=<count>
 //
-// Exists because a leaked state object has NO user-visible symptom -- it would only
-// surface later as a use-after-free of the state's raw `window_` pointer. The only
-// way to assert "closing a window releases its state" is to drive open/close N
-// times and check the live count. See docs/parra/64 and 67.
+// Exists because a leaked state object has NO user-visible symptom -- it would
+// only surface later as a use-after-free of the state's raw `window_` pointer.
+// The only way to assert "closing a window releases its state" is to drive
+// open/close N times and check the live count. See docs/parra/64 and 67.
 extern const char kParraPocWindowStress[];
 
 // P3.3 T1: move a tab to a second window, then leave both windows open so an
@@ -194,13 +199,13 @@ extern const char kParraPocWindowStress[];
 //   --parra-poc-tab-move=<environment-id-of-second-window>
 //
 // WHAT IT PROVES -- docs/parra/76 §A1 Q2/Q3 had only source analysis.
-// A cross-window move is a detach followed by an attach, and the two halves emit
-// DIFFERENT session commands:
+// A cross-window move is a detach followed by an attach, and the two halves
+// emit DIFFERENT session commands:
 //   * detach (source window, kRemoved)  -> TabClosed only; the old record stays
 //   * attach (target window, kInserted) -> SetWindowID(new) -> TabInserted()
 //                                          -> id=38 with the NEW window
-// Replay is last-write-wins, so the tab must come back in the TARGET window with
-// its ORIGINAL environment. The outer script asserts both after a restart.
+// Replay is last-write-wins, so the tab must come back in the TARGET window
+// with its ORIGINAL environment. The outer script asserts both after a restart.
 extern const char kParraPocTabMove[];
 
 // P3.3 T2: create a tab that has NO EnvironmentTag at insertion time, then set
@@ -212,12 +217,34 @@ extern const char kParraPocTabMove[];
 // through DIFFERENT paths when the tag arrives late:
 //   * TabInserted() sees no tag  -> writes id=0  (structure, no environment)
 //   * EnvironmentTag::Set()      -> observer -> RecordTabEnvironment()
-//                                -> AddTabExtraData() -> id=38 (structure + env)
-// The result must be that the source file contains BOTH ids for the same tab, and
-// that a restart resolves to the id=38 value (the last write) rather than to
-// Personal. This is the one case where a correct build still has a bare id=0 for
-// a Parra tab, which is why it needs its own test.
+//                                -> AddTabExtraData() -> id=38 (structure +
+//                                env)
+// The result must be that the source file contains BOTH ids for the same tab,
+// and that a restart resolves to the id=38 value (the last write) rather than
+// to Personal. This is the one case where a correct build still has a bare id=0
+// for a Parra tab, which is why it needs its own test.
 extern const char kParraPocLateTag[];
+
+// P3.4 PoC-1: verify that a live NetworkContext can take new host mapping
+// rules.
+//
+//   --parra-poc-host-mapping-update
+//
+// Runs the matrix described in docs/parra/80 and reports PARRA-POC1 lines.
+// Exists because "the update call returned" is not evidence: only the bytes a
+// real request receives can show whether the new rules are in effect.
+extern const char kParraPocHostMappingUpdate[];
+
+// Runs the scenario-E timeline: repoints environment `test-a` twice while its
+// page stays open, so an external CDP script can check that the page itself was
+// not disturbed.
+//
+// WHY A SECOND SWITCH: the rule-update PoC finishes and quits in a few seconds
+// and asserts only on request bodies. Scenario E needs the browser to stay up
+// long enough for a page to be sampled before, between and after the updates,
+// and it deliberately makes no page-content assertions itself -- the code that
+// changes routing must not also grade whether the page survived.
+extern const char kParraPocPageState[];
 
 // Forces the session-storage READ backend, for tests only.
 //

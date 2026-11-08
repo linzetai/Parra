@@ -2047,6 +2047,11 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
   // its own key because `personal` is never a stored definition record.
   registry->RegisterStringPref(prefs::kParraPersonalHostMappings,
                                std::string());
+  registry->RegisterStringPref(prefs::kParraPersonalHostMappingFormat,
+                               std::string());
+  registry->RegisterIntegerPref(prefs::kParraExternalLinkPolicy, 0);
+  registry->RegisterStringPref(prefs::kParraExternalLinkEnvironment,
+                               "personal");
   collaboration::prefs::RegisterProfilePrefs(registry);
   commerce::RegisterProfilePrefs(registry);
   context_hub::prefs::RegisterProfilePrefs(registry);

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
@@ -75,6 +76,7 @@ void TestSerializationRoundTrip() {
   a.color = "#2E7D32";
   a.icon = "beaker";
   a.host_mappings = "map sheet.test 127.0.0.1:8443";
+  a.host_mapping_format = HostMappingFormat::kChromiumMap;
   a.created_at = base::Time::UnixEpoch() + base::Milliseconds(1793000000000);
   a.updated_at = base::Time::UnixEpoch() + base::Milliseconds(1793000001200);
   a.enabled = true;
@@ -83,7 +85,8 @@ void TestSerializationRoundTrip() {
   Environment b;
   b.id = "test-b";
   b.name = "Test B";
-  b.host_mappings = "map sheet.test 127.0.0.2:8444, exclude localhost";
+  b.host_mappings = "127.0.0.2 sheet.test";
+  b.host_mapping_format = HostMappingFormat::kStandardHosts;
   b.created_at = base::Time::UnixEpoch() + base::Milliseconds(1793000002000);
   b.updated_at = b.created_at;
   b.enabled = false;
@@ -103,6 +106,7 @@ void TestSerializationRoundTrip() {
       if (expected.id != actual.id || expected.name != actual.name ||
           expected.color != actual.color || expected.icon != actual.icon ||
           expected.host_mappings != actual.host_mappings ||
+           expected.host_mapping_format != actual.host_mapping_format ||
           expected.enabled != actual.enabled ||
           expected.created_at != actual.created_at ||
           expected.updated_at != actual.updated_at) {
@@ -210,6 +214,201 @@ void TestInvalidHostMappingRejected() {
              "'");
 }
 
+void TestLegacyFormatMigration() {
+  const std::string blob = base::StrCat(
+      {"{\"schemaVersion\":1,\"environments\":[{\"id\":\"legacy\",",
+       "\"name\":\"Legacy\",\"hostMappings\":\"map old.test ",
+       "127.0.0.1\"}]}"});
+  const ParsedEnvironments parsed = ParseEnvironments(blob);
+  const bool migrated =
+      parsed.status == ParseStatus::kOk && parsed.environments.size() == 1 &&
+      parsed.environments[0].host_mappings == "map old.test 127.0.0.1" &&
+      parsed.environments[0].host_mapping_format ==
+          HostMappingFormat::kChromiumMap;
+  const std::string rewritten = SerializeEnvironments(parsed.environments);
+  Report(migrated && rewritten.find("\"hostMappingFormat\":\"chromium_map\"") !=
+                         std::string::npos,
+         "A8-legacy-format-explicitly-preserved",
+         "status=" + std::string(ParseStatusToString(parsed.status)) +
+             " source-preserved=" + (migrated ? "true" : "false"));
+
+  const ParsedEnvironments unknown = ParseEnvironments(base::StrCat(
+      {"{\"schemaVersion\":2,\"environments\":[{\"id\":\"future\",",
+       "\"name\":\"Future\",\"hostMappings\":\"future syntax\",",
+       "\"hostMappingFormat\":\"future_format\"}]}"}));
+  Report(unknown.read_only() && unknown.environments.size() == 1 &&
+             unknown.environments[0].host_mappings == "future syntax" &&
+             unknown.environments[0].host_mapping_format ==
+                 HostMappingFormat::kUnsupported,
+         "A9-unknown-format-kept-read-only",
+         "status=" + std::string(ParseStatusToString(unknown.status)));
+
+  const ParsedEnvironments malformed = ParseEnvironments(base::StrCat(
+      {"{\"schemaVersion\":2,\"environments\":[{\"id\":\"bad-mode\",",
+       "\"name\":\"Bad Mode\",\"hostMappingFormat\":7}]}"}));
+  Report(malformed.read_only() && malformed.environments.size() == 1 &&
+             malformed.environments[0].host_mapping_format ==
+                 HostMappingFormat::kUnsupported,
+         "A10-malformed-format-kept-read-only",
+         "status=" + std::string(ParseStatusToString(malformed.status)));
+}
+
+void TestHostMappingCompiler() {
+  std::string compiled;
+  std::vector<HostMappingDiagnostic> diagnostics;
+  const bool standard_ok = CompileHostMappings(
+      HostMappingFormat::kStandardHosts,
+      "# example\n203.0.113.10 one.test two.test\n2001:db8::10 six.test",
+      &compiled, &diagnostics);
+  const bool standard_expected =
+      compiled ==
+      "map one.test 203.0.113.10, map two.test 203.0.113.10, "
+      "map six.test [2001:db8::10]";
+
+  const bool whistle_ok = CompileHostMappings(
+      HostMappingFormat::kWhistleHost, "*.example.test:443 127.0.0.1:8443",
+      &compiled, &diagnostics);
+  const bool whistle_expected =
+      compiled == "map *.example.test:443 127.0.0.1:8443";
+
+  const bool whistle_ipv6_ok = CompileHostMappings(
+      HostMappingFormat::kWhistleHost, "api.example.test [2001:db8::10]:8443",
+      &compiled, &diagnostics);
+  const bool whistle_ipv6_expected =
+      compiled == "map api.example.test [2001:db8::10]:8443";
+
+  const bool legacy_ok = CompileHostMappings(
+      HostMappingFormat::kChromiumMap,
+      "MAP legacy.test 127.0.0.1, EXCLUDE localhost", &compiled, &diagnostics);
+  const bool legacy_expected =
+      compiled == "MAP legacy.test 127.0.0.1, EXCLUDE localhost";
+
+  const bool unsupported_ok = !CompileHostMappings(
+      HostMappingFormat::kWhistleHost, "https://example.test/path 127.0.0.1",
+      &compiled, &diagnostics);
+  const bool reports_line = !diagnostics.empty() && diagnostics[0].line == 1;
+
+  const bool later_line_rejected = !CompileHostMappings(
+      HostMappingFormat::kStandardHosts,
+      "127.0.0.1 good.test\n999.0.0.1 bad.test", &compiled, &diagnostics);
+  const bool later_line_reported =
+      !diagnostics.empty() && diagnostics[0].line == 2 && compiled.empty();
+
+  Report(standard_ok && standard_expected && whistle_ok && whistle_expected &&
+             whistle_ipv6_ok && whistle_ipv6_expected && legacy_ok &&
+             legacy_expected && unsupported_ok && reports_line &&
+             later_line_rejected && later_line_reported,
+         "A11-format-parser-validator-compiler",
+         "standard=" + std::string(standard_ok ? "ok" : "fail") +
+             " whistle=" + (whistle_ok ? "ok" : "fail") + " whistle-ipv6=" +
+             (whistle_ipv6_ok && whistle_ipv6_expected ? "ok" : "fail") +
+             " legacy=" + (legacy_ok ? "ok" : "fail") +
+             " invalid-line-reported=" +
+             (later_line_rejected && later_line_reported ? "true" : "false") +
+             " unsupported-rejected=" +
+             (unsupported_ok && reports_line ? "true" : "false"));
+}
+
+void TestPersonalHostMappingFormat(Profile* profile, EnvironmentStore* store) {
+  PrefService* prefs = profile ? profile->GetPrefs() : nullptr;
+  if (!prefs) {
+    Report(false, "B11-personal-format-migration", "no PrefService");
+    return;
+  }
+
+  const std::string rules_pref = ::prefs::kParraPersonalHostMappings;
+  const std::string format_pref = ::prefs::kParraPersonalHostMappingFormat;
+  const bool had_rules = prefs->HasPrefPath(rules_pref);
+  const bool had_format = prefs->HasPrefPath(format_pref);
+  const std::string old_rules = prefs->GetString(rules_pref);
+  const std::string old_format = prefs->GetString(format_pref);
+
+  prefs->SetString(rules_pref, "map personal.test 127.0.0.1");
+  prefs->ClearPref(format_pref);
+  const Environment legacy = store->PersonalEnvironment();
+  const bool legacy_preserved =
+      legacy.host_mappings == "map personal.test 127.0.0.1" &&
+      legacy.host_mapping_format == HostMappingFormat::kChromiumMap;
+
+  prefs->SetString(rules_pref, std::string());
+  prefs->ClearPref(format_pref);
+  const Environment fresh = store->PersonalEnvironment();
+  const bool empty_defaults_to_hosts =
+      fresh.host_mappings.empty() &&
+      fresh.host_mapping_format == HostMappingFormat::kStandardHosts;
+
+  std::string error;
+  const StoreResult saved = store->SetPersonalHostMappings(
+      "127.0.0.9 personal.test", HostMappingFormat::kStandardHosts, &error);
+  const Environment updated = store->PersonalEnvironment();
+  const std::string compiled =
+      store->GetHostMappingRulesForPartitionPath(base::FilePath());
+  const bool new_format_saved =
+      saved == StoreResult::kOk &&
+      updated.host_mapping_format == HostMappingFormat::kStandardHosts &&
+      updated.host_mappings == "127.0.0.9 personal.test" &&
+      compiled == "map personal.test 127.0.0.9";
+
+  if (had_rules) {
+    prefs->SetString(rules_pref, old_rules);
+  } else {
+    prefs->ClearPref(rules_pref);
+  }
+  if (had_format) {
+    prefs->SetString(format_pref, old_format);
+  } else {
+    prefs->ClearPref(format_pref);
+  }
+
+  Report(legacy_preserved && empty_defaults_to_hosts && new_format_saved,
+         "B11-personal-format-migration",
+         "legacy=" + std::string(legacy_preserved ? "preserved" : "failed") +
+             " empty-default=" +
+             (empty_defaults_to_hosts ? "standard-hosts" : "failed") +
+             " new-format=" + (new_format_saved ? "saved" : "failed") +
+             (error.empty() ? "" : " error='" + error + "'"));
+}
+
+void TestCompiledRulesPerEnvironment(EnvironmentStore* store) {
+  std::string error;
+  store->Delete("p32-host-standard", &error);
+  store->Delete("p32-host-whistle", &error);
+
+  EnvironmentDraft standard;
+  standard.id = "p32-host-standard";
+  standard.name = "P32 Host Standard";
+  standard.host_mappings = "127.0.0.1 shared.test";
+  standard.host_mapping_format = HostMappingFormat::kStandardHosts;
+
+  EnvironmentDraft whistle;
+  whistle.id = "p32-host-whistle";
+  whistle.name = "P32 Host Whistle";
+  whistle.host_mappings = "shared.test 127.0.0.2";
+  whistle.host_mapping_format = HostMappingFormat::kWhistleHost;
+
+  const StoreResult standard_result = store->Create(standard, &error);
+  const StoreResult whistle_result = store->Create(whistle, &error);
+  const base::FilePath standard_path =
+      EnvironmentStore::GetRelativePartitionPathForConfig(
+          store->GetStoragePartitionConfig(standard.id));
+  const base::FilePath whistle_path =
+      EnvironmentStore::GetRelativePartitionPathForConfig(
+          store->GetStoragePartitionConfig(whistle.id));
+  const std::string standard_rules =
+      store->GetHostMappingRulesForPartitionPath(standard_path);
+  const std::string whistle_rules =
+      store->GetHostMappingRulesForPartitionPath(whistle_path);
+  const bool isolated = standard_result == StoreResult::kOk &&
+                        whistle_result == StoreResult::kOk &&
+                        standard_rules == "map shared.test 127.0.0.1" &&
+                        whistle_rules == "map shared.test 127.0.0.2";
+
+  store->Delete("p32-host-standard", &error);
+  store->Delete("p32-host-whistle", &error);
+  Report(isolated, "B12-per-environment-compiled-rules",
+         "standard='" + standard_rules + "' whistle='" + whistle_rules + "'");
+}
+
 // ---------------------------------------------------------------------------
 // B. CRUD on the live profile's store
 // ---------------------------------------------------------------------------
@@ -228,6 +427,7 @@ void TestCrud(EnvironmentStore* store) {
   draft.color = "#123456";
   draft.icon = "beaker";
   draft.host_mappings = "map sheet.test 127.0.0.1:8443";
+  draft.host_mapping_format = HostMappingFormat::kChromiumMap;
   std::string error;
   const StoreResult created = store->Create(draft, &error);
   const Environment* found = store->Find("p32-create");
@@ -340,6 +540,7 @@ void TestDisabledSemantics(EnvironmentStore* store) {
   draft.id = "p32-disable";
   draft.name = "P32 Disable";
   draft.host_mappings = "map sheet.test 127.0.0.3:8445";
+  draft.host_mapping_format = HostMappingFormat::kChromiumMap;
   store->Delete("p32-disable", &error);
   store->Create(draft, &error);
 
@@ -506,9 +707,13 @@ class P32SelfTest {
     TestCorruptIsDetected();
     TestPartialInvalidKeepsGoodRecords();
     TestInvalidHostMappingRejected();
+    TestLegacyFormatMigration();
+    TestHostMappingCompiler();
 
     // B..E: live store.
     TestCrud(store);
+    TestPersonalHostMappingFormat(profile_, store);
+    TestCompiledRulesPerEnvironment(store);
     TestDisabledSemantics(store);
     TestFailClosed(store);
 
@@ -570,6 +775,7 @@ void RunSeedMode(EnvironmentStore* store, const std::string& spec) {
   draft.id = id;
   draft.name = "Seeded " + id;
   draft.host_mappings = rules;
+  draft.host_mapping_format = HostMappingFormat::kChromiumMap;
 
   std::string error;
   // Idempotent: a second seed of the same id updates it rather than failing, so
@@ -579,6 +785,7 @@ void RunSeedMode(EnvironmentStore* store, const std::string& spec) {
     EnvironmentPatch patch;
     patch.name = draft.name;
     patch.host_mappings = rules;
+    patch.host_mapping_format = HostMappingFormat::kChromiumMap;
     result = store->Update(id, patch, &error);
   }
   Report(result == StoreResult::kOk, "S1-seed-created",

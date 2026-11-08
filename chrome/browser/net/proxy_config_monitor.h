@@ -6,10 +6,12 @@
 #define CHROME_BROWSER_NET_PROXY_CONFIG_MONITOR_H_
 
 #include <memory>
+#include <stdint.h>
 #include <optional>
 #include <string>
 
 #include "base/memory/raw_ptr.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "build/buildflag.h"
 #include "extensions/buildflags/buildflags.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
@@ -61,7 +63,10 @@ class ProxyConfigMonitor : public net::ProxyConfigService::Observer,
   // whenever the configuration changes. Can be called more than once to inform
   // multiple NetworkContexts of proxy changes.
   void AddToNetworkContextParams(
-      network::mojom::NetworkContextParams* network_context_params);
+      network::mojom::NetworkContextParams* network_context_params,
+      bool enable_host_override = false,
+      const std::string& host_mapping_rules = std::string(),
+      uint64_t host_mapping_revision = 0);
 
   // Returns true if an explicit proxy is configured (manual proxy rules, PAC
   // URL, proxy override rules, or dynamic routing rules), false if direct (or
@@ -79,6 +84,16 @@ class ProxyConfigMonitor : public net::ProxyConfigService::Observer,
   void OnProxyConfigChanged(
       const net::ProxyConfigWithAnnotation& config,
       net::ProxyConfigService::ConfigAvailability availability) override;
+
+    std::pair<network::mojom::HostOverridePolicy, std::string>
+    GetHostOverridePolicy(
+      const net::ProxyConfigWithAnnotation& config,
+      net::ProxyConfigService::ConfigAvailability availability,
+      bool custom_proxy_config = false) const;
+  void OnHostOverridePolicyPrefChanged();
+  void NotifyHostOverridePolicyClients(
+      const net::ProxyConfigWithAnnotation& config,
+      net::ProxyConfigService::ConfigAvailability availability);
 
   // network::mojom::ProxyConfigPollerClient implementation:
   void OnLazyProxyConfigPoll() override;
@@ -98,6 +113,11 @@ class ProxyConfigMonitor : public net::ProxyConfigService::Observer,
       poller_receiver_set_;
 
   mojo::RemoteSet<network::mojom::ProxyConfigClient> proxy_config_client_set_;
+  mojo::RemoteSet<network::mojom::HostOverridePolicyClient>
+      host_override_policy_client_set_;
+  raw_ptr<Profile> profile_for_host_override_ = nullptr;
+  PrefChangeRegistrar host_override_pref_change_registrar_;
+  bool custom_proxy_configuration_active_ = false;
 
 #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
   mojo::ReceiverSet<network::mojom::ProxyErrorClient> error_receiver_set_;

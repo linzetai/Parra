@@ -8,17 +8,18 @@
 #include <utility>
 
 #include "base/check.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/web_contents.h"
 
 namespace parra {
 
 // The on-disk sessions::SessionTab::extra_data key. Declared in the header so
-// //chrome/browser/sessions can reuse it on the rebuild path without depending on
-// the UI layer (see the header comment).
+// //chrome/browser/sessions can reuse it on the rebuild path without depending
+// on the UI layer (see the header comment).
 const char kEnvironmentSessionExtraDataKey[] = "parra.environment_id";
 
-// Marks the tab as Parra-owned even when the environment id itself is unreadable.
-// See the header for the four cases this disambiguates.
+// Marks the tab as Parra-owned even when the environment id itself is
+// unreadable. See the header for the four cases this disambiguates.
 const char kEnvironmentSessionOwnerKey[] = "parra.owner";
 
 namespace {
@@ -31,7 +32,8 @@ namespace {
 class EnvironmentUserData : public base::SupportsUserData::Data {
  public:
   // Changing this string breaks nothing at runtime, but it is part of the
-  // session-restore contract's sibling key, so keep the two distinct and stable:
+  // session-restore contract's sibling key, so keep the two distinct and
+  // stable:
   //   "parra.environment"      -> live browser state (here)
   //   "parra.environment_id"   -> on-disk SessionTab::extra_data
   // See chrome/browser/ui/browser_tabrestore.cc kParraEnvironmentExtraDataKey.
@@ -48,14 +50,32 @@ class EnvironmentUserData : public base::SupportsUserData::Data {
 
 constexpr char EnvironmentUserData::kKey[];
 
-// The installed observer, if any. Function-local static rather than a global so the
-// initialisation order cannot bite during startup.
+class BrowserLevelUserData : public base::SupportsUserData::Data {};
+constexpr char kBrowserLevelKey[] = "parra.browser_level_tab";
+
+// The installed observer, if any. Function-local static rather than a global so
+// the initialisation order cannot bite during startup.
 EnvironmentTag::Observer& TagObserver() {
   static base::NoDestructor<EnvironmentTag::Observer> observer;
   return *observer;
 }
 
 }  // namespace
+
+// static
+void BrowserLevelTab::Mark(content::WebContents* contents) {
+  CHECK(contents);
+  CHECK(!EnvironmentTag::HasTag(contents));
+  CHECK(!tabs::TabInterface::MaybeGetFromContents(contents));
+  CHECK(!Is(contents));
+  contents->SetUserData(kBrowserLevelKey,
+                        std::make_unique<BrowserLevelUserData>());
+}
+
+// static
+bool BrowserLevelTab::Is(const content::WebContents* contents) {
+  return contents && contents->GetUserData(kBrowserLevelKey);
+}
 
 // static
 void EnvironmentTag::SetObserver(Observer observer) {
@@ -67,32 +87,40 @@ void EnvironmentTag::Set(content::WebContents* contents,
                          const std::string& environment_id) {
   CHECK(contents);
   CHECK(!environment_id.empty());
+  CHECK(!BrowserLevelTab::Is(contents));
   contents->SetUserData(EnvironmentUserData::kKey,
                         std::make_unique<EnvironmentUserData>(environment_id));
 
   // Announce immediately: this is the earliest moment the tab's ownership is
   // known, and doing it here means the record does not depend on winning a race
   // against a session-command rebuild.
-  if (TagObserver() && !TagObserver().is_null())
+  if (TagObserver() && !TagObserver().is_null()) {
     TagObserver().Run(contents, environment_id);
+  }
 }
 
 // static
 std::string EnvironmentTag::Get(const content::WebContents* contents) {
-  if (!contents)
+  if (!contents) {
     return kDefaultEnvironmentId;
+  }
+  if (BrowserLevelTab::Is(contents)) {
+    return std::string();
+  }
 
   auto* data = static_cast<EnvironmentUserData*>(
       contents->GetUserData(EnvironmentUserData::kKey));
-  if (!data)
+  if (!data) {
     return kDefaultEnvironmentId;
+  }
   return data->environment_id();
 }
 
 // static
 bool EnvironmentTag::HasTag(const content::WebContents* contents) {
-  if (!contents)
+  if (!contents) {
     return false;
+  }
   return contents->GetUserData(EnvironmentUserData::kKey) != nullptr;
 }
 

@@ -18,6 +18,11 @@
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
+#include "ui/views/cascading_property.h"
+
+// Optional per-window tab surface supplied by Parra's tab strip region.
+extern const ui::ClassProperty<views::CascadingProperty<SkColor>*>* const
+    kParraEnvironmentTabColor;
 
 template <>
 struct ui::metadata::TypeConverter<TabStyle::TabColors>

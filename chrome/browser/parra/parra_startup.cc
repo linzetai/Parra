@@ -11,6 +11,8 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "chrome/browser/parra/environment_registry.h"
+#include "chrome/browser/parra/environment_tab_operations.h"
+#include "chrome/browser/parra/environment_tag.h"
 #include "chrome/browser/parra/parra_storage_partition_util.h"
 #include "chrome/browser/parra/parra_switches.h"
 #include "chrome/browser/profiles/profile.h"
@@ -34,9 +36,9 @@ namespace {
 // tab stays inside that partition.
 //
 // `SiteInstance::CreateForFixedStoragePartition()` is the supported upstream
-// API for this: it sets is_fixed_storage_partition=true on the BrowsingInstance,
-// which makes NavigationRequest and RenderFrameHostManager propagate the
-// partition across cross-site navigations, popups and frames.
+// API for this: it sets is_fixed_storage_partition=true on the
+// BrowsingInstance, which makes NavigationRequest and RenderFrameHostManager
+// propagate the partition across cross-site navigations, popups and frames.
 //
 // IMPORTANT: that API CHECKs `!partition_config.is_default()`. An environment
 // that maps to the default partition (no dedicated NetworkContext) must go
@@ -72,8 +74,9 @@ bool InitializePocEnvironmentRegistry() {
 
 void MaybeOpenPocEnvironmentTabs() {
   EnvironmentRegistry* registry = EnvironmentRegistry::GetInstance();
-  if (!registry->enabled())
+  if (!registry->enabled()) {
     return;
+  }
 
   // The lifecycle PoC creates its own tabs with a controlled count per
   // environment. Letting both paths run would double the tab count and make
@@ -128,9 +131,9 @@ void MaybeOpenPocEnvironmentTabs() {
   // closed once the first environment tab exists, keeping the PoC from leaving
   // a stray blank tab behind. Guarded because session restore or a command
   // line URL may have changed what the tab strip holds.
-  content::WebContents* placeholder =
-      tab_strip_model->count() == 1 ? tab_strip_model->GetWebContentsAt(0)
-                                    : nullptr;
+  content::WebContents* placeholder = tab_strip_model->count() == 1
+                                          ? tab_strip_model->GetWebContentsAt(0)
+                                          : nullptr;
 
   for (size_t i = 0; i < environments.size(); ++i) {
     const EnvironmentRegistry::Environment& environment = environments[i];
@@ -172,8 +175,20 @@ void MaybeOpenPocEnvironmentTabs() {
 
   if (placeholder) {
     const int index = tab_strip_model->GetIndexOfWebContents(placeholder);
-    if (index != TabStripModel::kNoTab)
+    if (index != TabStripModel::kNoTab) {
       tab_strip_model->CloseWebContentsAt(index, TabCloseTypes::CLOSE_NONE);
+    }
+  }
+
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          "parra-poc-open-browser-level-tab")) {
+    auto special = content::WebContents::Create(
+        content::WebContents::CreateParams(profile));
+    BrowserLevelTab::Mark(special.get());
+    if (!EnvironmentTabOperations::InsertOrActivateBrowserLevelTab(
+            tab_strip_model, std::move(special))) {
+      LOG(ERROR) << "parra: could not open browser-level test tab";
+    }
   }
 }
 

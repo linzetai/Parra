@@ -16,6 +16,7 @@
 #include "chrome/browser/ui/views/session_restore_infobar/session_restore_infobar_prefs.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/branded_strings.h"
+#include "chrome/grit/chrome_unscaled_resources.h"
 #include "components/infobars/content/content_infobar_manager.h"
 #include "components/infobars/core/infobar.h"
 #include "components/infobars/core/infobar_manager.h"
@@ -97,11 +98,8 @@ SessionRestoreInfoBarDelegate::GetIdentifier() const {
       SESSION_RESTORE_INFOBAR_DELEGATE;
 }
 
-const gfx::VectorIcon& SessionRestoreInfoBarDelegate::GetVectorIcon() const {
-  return dark_mode() ? features::IsRoundedIconsEnabled()
-                           ? omnibox::kChromeProductIcon
-                           : omnibox::kProductChromeRefreshOldIcon
-                     : vector_icons::kProductRefreshIcon;
+int SessionRestoreInfoBarDelegate::GetIconId() const {
+  return IDR_PARRA_FAVICON_20;
 }
 
 bool SessionRestoreInfoBarDelegate::ShouldExpire(

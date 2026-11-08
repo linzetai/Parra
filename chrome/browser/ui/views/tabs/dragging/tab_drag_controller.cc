@@ -26,6 +26,10 @@
 #include "base/scoped_observation.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
+#include "chrome/browser/parra/environment_index_mapper.h"
+#include "chrome/browser/parra/environment_tab_operations.h"
+#include "chrome/browser/parra/environment_tag.h"
+#include "chrome/browser/parra/window_environment_state.h"
 #include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
@@ -42,6 +46,7 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "chrome/browser/ui/ui_features.h"
+#include "chrome/browser/ui/unload_controller.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_popup_presenter_base.h"
 #include "chrome/browser/ui/views/tabs/dragging/drag_session_data.h"
@@ -394,6 +399,40 @@ class TabDragController::DraggedTabsClosedTracker
 ///////////////////////////////////////////////////////////////////////////////
 // TabDragController, public:
 
+class TabDragController::ParraDragTransaction {
+ public:
+  ParraDragTransaction(BrowserWindowInterface* browser,
+                       content::WebContents* contents)
+      : browser_(browser->GetWeakPtr()), contents_(contents->GetWeakPtr()) {
+    auto* state = parra::WindowEnvironmentState::GetFor(browser);
+    if (state && state->ReserveBrowserLevelTab(contents)) {
+      environment_ = state->active_environment();
+      state->BeginEnvironmentAdoptionSuppression();
+      reserved_ = true;
+    }
+  }
+  ~ParraDragTransaction() {
+    if (!browser_ || !reserved_) {
+      return;
+    }
+    auto* state = parra::WindowEnvironmentState::GetFor(browser_.get());
+    if (!state) {
+      return;
+    }
+    state->ReleaseBrowserLevelTabReservation(contents_.get());
+    state->SetActiveEnvironment(environment_);
+    state->EndEnvironmentAdoptionSuppression();
+  }
+  bool reserved() const { return reserved_; }
+  void OnSourceClosed() { browser_.reset(); }
+
+ private:
+  base::WeakPtr<BrowserWindowInterface> browser_;
+  base::WeakPtr<content::WebContents> contents_;
+  std::string environment_;
+  bool reserved_ = false;
+};
+
 // static
 const int TabDragController::kTouchVerticalDetachMagnetism = 50;
 
@@ -435,6 +474,7 @@ TabDragController::~TabDragController() {
   }
   CHECK(!IsInObserverList());
 
+  parra_drag_transaction_.reset();
   CloseOrRestoreDeferredEmptyBrowsers(
       std::exchange(empty_browsers_to_close_on_end_drag_, {}));
 
@@ -532,6 +572,7 @@ TabDragController::Liveness TabDragController::Init(
       ref->detach_behavior_ = DetachBehavior::kNotDetachable;
     }
   }
+
 #endif  // BUILDFLAG(IS_MAC)
 
   ref->source_context_emptiness_tracker_ =
@@ -562,6 +603,35 @@ TabDragController::Liveness TabDragController::Init(
     if (std::optional<tab_groups::TabGroupId> header_group_id =
             source_context_->GetTabGroupForHeader(dragging_view)) {
       ref->drag_data_.dragging_groups.insert(*header_group_id);
+    }
+  }
+
+  for (const auto& data : ref->drag_data_.tab_drag_data_) {
+    if (parra::BrowserLevelTab::Is(data.contents)) {
+      auto* model = ref->source_context_->GetTabStripModel();
+      auto* browser = model->delegate()->GetBrowserWindowInterface();
+      if (browser) {
+        ref->parra_drag_transaction_ =
+            std::make_unique<ParraDragTransaction>(browser, data.contents);
+        ref->parra_source_close_subscription_ =
+            browser->RegisterBrowserDidClose(base::BindRepeating(
+                [](base::WeakPtr<TabDragController> controller,
+                   BrowserWindowInterface*) {
+                  if (!controller) {
+                    return;
+                  }
+                  controller->source_context_ = nullptr;
+                  if (controller->parra_drag_transaction_) {
+                    controller->parra_drag_transaction_->OnSourceClosed();
+                  }
+                },
+                ref));
+      }
+      if (!ref->parra_drag_transaction_ ||
+          !ref->parra_drag_transaction_->reserved()) {
+        ref->detach_behavior_ = DetachBehavior::kNotDetachable;
+      }
+      break;
     }
   }
 
@@ -654,8 +724,9 @@ bool TabDragController::OnBrowserTabStripEmptyDuringDrag(
   // so destroying that window mid-gesture strands the drag. Temporary browsers
   // created mid-drag when detaching a subset of tabs (or unrelated browsers)
   // do not own the initial touch sequence and can close immediately.
-  if (g_tab_drag_controller->event_source() !=
-          ui::mojom::DragEventSource::kTouch ||
+  if ((g_tab_drag_controller->event_source() !=
+           ui::mojom::DragEventSource::kTouch &&
+       !g_tab_drag_controller->parra_drag_transaction_) ||
       !g_tab_drag_controller->source_context_ ||
       browser->GetTabStripModel() !=
           g_tab_drag_controller->source_context_->GetTabStripModel()) {
@@ -826,7 +897,12 @@ TabDragController::Liveness TabDragController::Drag(
         model->GetFocusedGroup().has_value() &&
         drag_data_.group_header_id() == model->GetFocusedGroup();
 
-    if (is_dragging_all_tabs || is_dragging_focused_group_header) {
+    const bool has_browser_level = std::ranges::any_of(
+        drag_data_.tab_drag_data_, [](const TabDragData& data) {
+          return parra::BrowserLevelTab::Is(data.contents);
+        });
+    if ((is_dragging_all_tabs || is_dragging_focused_group_header) &&
+        !has_browser_level) {
       if (ShouldDragWindowUsingSystemDnD()) {
         return StartSystemDnDSessionIfNecessary(attached_context_,
                                                 point_in_screen);
@@ -913,7 +989,8 @@ void TabDragController::EndDrag(EndDragReason reason) {
   }
   drag_start_time_.reset();
 
-  EndDragImpl(reason != EndDragReason::kComplete && source_context_
+  EndDragImpl((reason != EndDragReason::kComplete || parra_blocked_drop_) &&
+                      source_context_
                   ? EndDragType::kCanceled
                   : EndDragType::kNormal);
 }
@@ -989,6 +1066,9 @@ void TabDragController::OnWidgetDestroyed(views::Widget* widget) {
 }
 
 void TabDragController::OnSourceTabStripEmpty() {
+  if (parra_drag_transaction_ && parra_drag_transaction_->reserved()) {
+    return;
+  }
   // NULL out source_context_ so that we don't attempt to add back to it (in
   // the case of a revert).
   source_context_ = nullptr;
@@ -1085,7 +1165,41 @@ TabDragController::Liveness TabDragController::ContinueDragging(
   CHECK(attached_context_, base::NotFatalUntil::M162);
 
   TabDragContext* target_context = source_context_;
-  if (detach_behavior_ == DetachBehavior::kDetachable) {
+  const bool has_browser_level = std::ranges::any_of(
+      drag_data_.tab_drag_data_, [](const TabDragData& data) {
+        return parra::BrowserLevelTab::Is(data.contents);
+      });
+  if (has_browser_level && detach_behavior_ == DetachBehavior::kDetachable) {
+    // A missing or forbidden target is not a tear-off: keep the dragged tabs
+    // in the current model until a specific destination passes preflight.
+    auto [alive, context, drop_target] = GetDragTargetForPoint(point_in_screen);
+    if (alive == Liveness::kDeleted) {
+      return Liveness::kDeleted;
+    }
+    target_context = attached_context_;
+    parra_blocked_drop_ =
+        !DoesTabStripContain(attached_context_, point_in_screen);
+    if (context && context != attached_context_) {
+      TabStripModel* source = attached_context_->GetTabStripModel();
+      std::vector<int> indices;
+      for (const TabDragData& data : drag_data_.tab_drag_data_) {
+        if (data.contents) {
+          indices.push_back(source->GetIndexOfWebContents(data.contents));
+        }
+      }
+      if (source_context_) {
+        if (parra::EnvironmentTabOperations::CanMoveTabsToWindow(
+                source, context->GetTabStripModel(), indices)) {
+          target_context = context;
+          parra_blocked_drop_ = false;
+        } else {
+          parra_blocked_drop_ = true;
+        }
+      } else {
+        parra_blocked_drop_ = true;
+      }
+    }
+  } else if (detach_behavior_ == DetachBehavior::kDetachable) {
     auto [alive, context, drop_target] = GetDragTargetForPoint(point_in_screen);
     if (alive == Liveness::kDeleted) {
       return Liveness::kDeleted;
@@ -1153,6 +1267,30 @@ TabDragController::Liveness TabDragController::DragBrowserToNewTabStrip(
                "point_in_screen", point_in_screen.ToString());
 
   base::WeakPtr<TabDragController> ref = weak_factory_.GetWeakPtr();
+  const bool browser_level_drag = std::ranges::any_of(
+      drag_data_.tab_drag_data_, [](const TabDragData& data) {
+        return parra::BrowserLevelTab::Is(data.contents);
+      });
+  const auto still_safe = [this, target_context]() {
+    if (!attached_context_ || !target_context) {
+      return false;
+    }
+    TabStripModel* source = attached_context_->GetTabStripModel();
+    std::vector<int> indices;
+    for (const TabDragData& data : drag_data_.tab_drag_data_) {
+      if (data.contents) {
+        indices.push_back(source->GetIndexOfWebContents(data.contents));
+      }
+    }
+    return parra::EnvironmentTabOperations::CanMoveTabsToWindow(
+        source, target_context->GetTabStripModel(), indices);
+  };
+  // The target may have changed during event dispatch. Recheck before any
+  // transfer of capture, and again immediately after it, before detaching.
+  if (browser_level_drag && !still_safe()) {
+    parra_blocked_drop_ = true;
+    return Liveness::kAlive;
+  }
 
   dragging_tabs_session_ = nullptr;
 
@@ -1170,6 +1308,16 @@ TabDragController::Liveness TabDragController::DragBrowserToNewTabStrip(
 
   CHECK(ref);
 #endif
+  if (browser_level_drag && !still_safe()) {
+    parra_blocked_drop_ = true;
+    // The old session was released before capture transfer. Recreate it so
+    // a subsequent mouse move or cancellation can safely remain in the source.
+    if (current_state_ == DragState::kDraggingTabs &&
+        attached_context_->GetPositioningDelegate()) {
+      StartDraggingTabsSession(false, point_in_screen);
+    }
+    return SetCapture(attached_context_);
+  }
 
   if (current_state_ == DragState::kDraggingWindow) {
     // ReleaseCapture() is going to result in calling back to us (because it
@@ -1605,6 +1753,24 @@ void TabDragController::AttachToNewContext(
     }
   }
 
+  DCHECK_LE(
+      std::ranges::count_if(drag_data_.tab_drag_data_,
+                            [](const TabDragData& data) {
+                              return parra::BrowserLevelTab::Is(data.contents);
+                            }),
+      1);
+  if (std::ranges::any_of(drag_data_.tab_drag_data_,
+                          [](const TabDragData& data) {
+                            return parra::BrowserLevelTab::Is(data.contents);
+                          })) {
+    int special_count = 0;
+    for (int i = 0; i < tab_strip_model->count(); ++i) {
+      special_count +=
+          parra::BrowserLevelTab::Is(tab_strip_model->GetWebContentsAt(i));
+    }
+    DCHECK_EQ(special_count, 1);
+  }
+
   // If we're dragging a saved group, resume tracking now that the group is
   // re-attached.
   MaybeResumeTrackingSavedTabGroup();
@@ -1663,7 +1829,6 @@ std::tuple<std::unique_ptr<TabDragController>,
 TabDragController::Detach(ReleaseCapture release_capture) {
   TRACE_EVENT1("views", "TabDragController::Detach", "release_capture",
                release_capture);
-
   attached_context_tabs_closed_tracker_.reset();
 
   // Detaching may trigger the Widget bounds to change. Such bounds changes
@@ -1710,6 +1875,30 @@ TabDragController::Detach(ReleaseCapture release_capture) {
     }
   }
   std::ranges::sort(dragged_indices);
+
+  // If an ordinary drag leaves a browser-level tab behind, keep the source
+  // window's environment authoritative during native selection bookkeeping.
+  content::WebContents* remaining_browser_level = nullptr;
+  for (int i = 0; i < attached_model->count(); ++i) {
+    if (parra::BrowserLevelTab::Is(attached_model->GetWebContentsAt(i)) &&
+        !std::ranges::contains(dragged_indices, i)) {
+      remaining_browser_level = attached_model->GetWebContentsAt(i);
+      break;
+    }
+  }
+  const bool dragging_browser_level = std::ranges::any_of(
+      drag_data_.tab_drag_data_, [](const TabDragData& data) {
+        return parra::BrowserLevelTab::Is(data.contents);
+      });
+  auto* source_state =
+      (remaining_browser_level || dragging_browser_level)
+          ? parra::WindowEnvironmentState::GetForModel(attached_model)
+          : nullptr;
+  std::optional<parra::WindowEnvironmentState::ScopedAdoptionSuppression>
+      suppression;
+  if (source_state) {
+    suppression.emplace(source_state);
+  }
 
   int next_active_index = TabStripModel::kNoTab;
   if (drag_data_.group_header_drag_data_.has_value() &&
@@ -1769,6 +1958,18 @@ TabDragController::Detach(ReleaseCapture release_capture) {
           next_active_index,
           TabStripUserGestureDetails(
               TabStripUserGestureDetails::GestureType::kOther));
+    }
+  }
+
+  if (source_state && remaining_browser_level) {
+    const int special_index =
+        attached_model->GetIndexOfWebContents(remaining_browser_level);
+    const int active_index = attached_model->active_index();
+    parra::EnvironmentIndexMapper mapper(attached_model);
+    if (special_index != TabStripModel::kNoTab &&
+        !mapper.IsTabVisible(source_state->active_environment(),
+                             active_index)) {
+      attached_model->ActivateTabAt(special_index);
     }
   }
 
@@ -2176,6 +2377,21 @@ void TabDragController::RevertDrag() {
   CHECK(attached_context_);
   CHECK(source_context_);
 
+  if (attached_context_ != source_context_) {
+    for (const auto& data : drag_data_.tab_drag_data_) {
+      if (!parra::BrowserLevelTab::Is(data.contents)) {
+        continue;
+      }
+      auto* from = attached_context_->GetTabStripModel();
+      const int index = from->GetIndexOfWebContents(data.contents);
+      if (!parra::EnvironmentTabOperations::CanMoveTabsToWindow(
+              from, source_context_->GetTabStripModel(), {index})) {
+        LOG(ERROR) << "parra-drag: cannot safely restore reserved tab";
+        return;
+      }
+    }
+  }
+
   dragging_tabs_session_ = nullptr;
   if (current_drag_target_) {
     current_drag_target_->OnTabDragEnded();
@@ -2242,6 +2458,26 @@ void TabDragController::RevertDrag() {
     }
   }
   MaybeResumeTrackingSavedTabGroup();
+
+  // A provisionally emptied source entered UnloadController's completed
+  // state even though its close was deferred. Once the tab is back, cancel
+  // that provisional close before a later drag can schedule browser deletion.
+  if (parra_drag_transaction_ && source_context_) {
+    auto* source_browser = source_context_->GetTabStripModel()
+                               ->delegate()
+                               ->GetBrowserWindowInterface();
+    if (source_browser && !source_context_->GetTabStripModel()->empty() &&
+        std::ranges::any_of(empty_browsers_to_close_on_end_drag_,
+                            [source_browser](const auto& browser) {
+                              return browser.get() == source_browser;
+                            })) {
+      auto* unload = UnloadController::From(source_browser);
+      if (!unload->is_delete_scheduled() &&
+          unload->is_attempting_to_close_browser()) {
+        unload->CancelWindowClose();
+      }
+    }
+  }
 
   if (did_restore_window_) {
     MaximizeAttachedWindow();
@@ -2436,6 +2672,14 @@ void TabDragController::RevertTabAt(size_t drag_index) {
     source_context_->GetTabStripModel()->InsertDetachedTabAt(
         target_index, std::move(detached_tab),
         (tab_data.pinned ? AddTabTypes::ADD_PINNED : 0), existing_group);
+    if (parra::BrowserLevelTab::Is(tab_data.contents)) {
+      auto* model = source_context_->GetTabStripModel();
+      int count = 0;
+      for (int i = 0; i < model->count(); ++i) {
+        count += parra::BrowserLevelTab::Is(model->GetWebContentsAt(i));
+      }
+      DCHECK_EQ(count, 1);
+    }
   } else {
     // The Tab was moved within the TabDragContext where the drag
     // was initiated. Move it back to the starting location.

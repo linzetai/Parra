@@ -27,6 +27,14 @@ MappedHostResolver::MappedHostResolver(std::unique_ptr<HostResolver> impl)
 
 MappedHostResolver::~MappedHostResolver() = default;
 
+// Parra P3.4 PoC-1. Safe to call on a live resolver: CreateRequest() reads
+// `rules_` on every request (see below), so a rule change applies to the next
+// lookup without touching in-flight requests or existing sockets.
+bool MappedHostResolver::SetHostMappingRules(std::string_view rules) {
+  rules_.SetRulesFromString(rules);
+  return true;
+}
+
 void MappedHostResolver::OnShutdown() {
   impl_->OnShutdown();
 }

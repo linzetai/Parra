@@ -4,6 +4,7 @@
 
 #include "chrome/browser/parra/environment_serialization.h"
 
+#include <algorithm>
 #include <string_view>
 #include <utility>
 
@@ -13,6 +14,7 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
+#include "chrome/browser/parra/host_mapping_compiler.h"
 #include "net/base/host_mapping_rules.h"
 
 namespace parra {
@@ -29,6 +31,7 @@ constexpr char kNameKey[] = "name";
 constexpr char kColorKey[] = "color";
 constexpr char kIconKey[] = "icon";
 constexpr char kHostMappingsKey[] = "hostMappings";
+constexpr char kHostMappingFormatKey[] = "hostMappingFormat";
 constexpr char kCreatedAtKey[] = "createdAt";
 constexpr char kUpdatedAtKey[] = "updatedAt";
 constexpr char kEnabledKey[] = "enabled";
@@ -176,66 +179,80 @@ bool IsValidEnvironmentId(std::string_view id) {
 }
 
 bool ValidateHostMappings(std::string_view host_mappings, std::string* error) {
-  if (host_mappings.empty())
-    return true;
+  return ValidateHostMappings(HostMappingFormat::kChromiumMap, host_mappings,
+                              error);
+}
 
-  // Feed the string to the SAME parser the network stack uses. A hand-written
-  // grammar check would accept strings that net::HostMappingRules silently drops,
-  // turning "validated" into "stored but ignored" -- the failure mode with no
-  // visible symptom other than the wrong backend answering.
-  net::HostMappingRules probe;
-  const std::vector<std::string_view> rules = base::SplitStringPiece(
-      host_mappings, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
-  for (std::string_view rule : rules) {
-    if (rule.empty())
-      continue;  // tolerate "a, ,b" rather than rejecting a harmless separator
-    if (!probe.AddRuleFromString(rule)) {
-      if (error)
-        *error = "unparseable host mapping rule: '" + std::string(rule) + "'";
-      return false;
+bool ValidateHostMappings(HostMappingFormat format,
+                          std::string_view host_mappings,
+                          std::string* error) {
+  std::string compiled;
+  std::vector<HostMappingDiagnostic> diagnostics;
+  if (CompileHostMappings(format, host_mappings, &compiled, &diagnostics)) {
+    return true;
+  }
+  if (error) {
+    if (diagnostics.empty()) {
+      *error = "host mappings could not be compiled";
+    } else {
+      auto first_error = std::find_if(
+          diagnostics.begin(), diagnostics.end(), [](const auto& diagnostic) {
+            return diagnostic.severity == HostMappingDiagnosticSeverity::kError;
+          });
+      const HostMappingDiagnostic& first =
+          first_error == diagnostics.end() ? diagnostics.front() : *first_error;
+      *error = "line " + std::to_string(first.line) + ": " + first.message;
     }
   }
-  return true;
+  return false;
 }
 
 StoreResult ValidateEnvironment(const Environment& environment,
                                 std::string* error) {
   if (!IsValidEnvironmentId(environment.id)) {
-    if (error)
+    if (error) {
       *error = "invalid id '" + environment.id +
                "' (allowed: [a-z0-9_-], 1..32 characters)";
+    }
     return StoreResult::kInvalidId;
   }
 
   if (environment.id == kPersonalEnvironmentIdValue) {
-    if (error)
+    if (error) {
       *error = "id 'personal' is reserved";
+    }
     return StoreResult::kReservedId;
   }
 
   if (environment.name.empty() || environment.name.size() > kMaxNameLength) {
-    if (error)
+    if (error) {
       *error = "name must be 1..64 characters, got " +
                std::to_string(environment.name.size());
+    }
     return StoreResult::kInvalidField;
   }
 
   if (!IsValidColor(environment.color)) {
-    if (error)
-      *error = "colour must be empty or #RRGGBB, got '" + environment.color + "'";
+    if (error) {
+      *error = "colour must be empty or #RRGGBB, got '" + environment.color +
+               "'";
+    }
     return StoreResult::kInvalidField;
   }
 
   if (!IsValidIcon(environment.icon)) {
-    if (error)
+    if (error) {
       *error = "unknown icon '" + environment.icon + "'";
+    }
     return StoreResult::kInvalidField;
   }
 
   std::string mapping_error;
-  if (!ValidateHostMappings(environment.host_mappings, &mapping_error)) {
-    if (error)
+  if (!ValidateHostMappings(environment.host_mapping_format,
+                             environment.host_mappings, &mapping_error)) {
+    if (error) {
       *error = mapping_error;
+    }
     return StoreResult::kInvalidHostMapping;
   }
 
@@ -258,6 +275,8 @@ std::string SerializeEnvironments(
       record.Set(kIconKey, base::Value(environment.icon));
     if (!environment.host_mappings.empty())
       record.Set(kHostMappingsKey, base::Value(environment.host_mappings));
+    record.Set(kHostMappingFormatKey,
+               HostMappingFormatToString(environment.host_mapping_format));
     record.Set(kCreatedAtKey, base::Value(ToMillis(environment.created_at)));
     record.Set(kUpdatedAtKey, base::Value(ToMillis(environment.updated_at)));
     record.Set(kEnabledKey, base::Value(environment.enabled));
@@ -328,6 +347,14 @@ ParsedEnvironments ParseEnvironments(const std::string& json) {
           environment.icon = *icon;
         if (const std::string* rules = record.FindString(kHostMappingsKey))
           environment.host_mappings = *rules;
+        if (const base::Value* format_value =
+          record.Find(kHostMappingFormatKey)) {
+          const std::string* format = format_value->GetIfString();
+          if (!format || !HostMappingFormatFromString(
+                 *format, &environment.host_mapping_format)) {
+            environment.host_mapping_format = HostMappingFormat::kUnsupported;
+          }
+        }
         if (std::optional<double> created = record.FindDouble(kCreatedAtKey))
           environment.created_at = FromMillis(*created);
         if (std::optional<double> updated = record.FindDouble(kUpdatedAtKey))
@@ -358,6 +385,7 @@ ParsedEnvironments ParseEnvironments(const std::string& json) {
   }
 
   int rejected = 0;
+  bool unsupported_host_mapping_format = false;
   size_t seen = 0;
   for (const base::Value& value : *list) {
     if (seen++ >= kMaxEnvironments)
@@ -381,36 +409,63 @@ ParsedEnvironments ParseEnvironments(const std::string& json) {
     // `name` falls back to the id rather than dropping the record: an environment
     // whose label was lost is still a usable environment, and dropping it would
     // orphan every tab pointing at it.
-    if (const std::string* name = record.FindString(kNameKey))
+    if (const std::string* name = record.FindString(kNameKey)) {
       environment.name = *name;
-    else
+    } else {
       environment.name = environment.id;
+    }
 
-    if (const std::string* color = record.FindString(kColorKey))
+    if (const std::string* color = record.FindString(kColorKey)) {
       environment.color = *color;
-    if (const std::string* icon = record.FindString(kIconKey))
+    }
+    if (const std::string* icon = record.FindString(kIconKey)) {
       environment.icon = *icon;
-    if (const std::string* rules = record.FindString(kHostMappingsKey))
+    }
+    if (const std::string* rules = record.FindString(kHostMappingsKey)) {
       environment.host_mappings = *rules;
+    }
 
-    if (std::optional<double> created = record.FindDouble(kCreatedAtKey))
+    // Records from schema 1 and earlier had no format field and always stored
+    // Chromium MAP/EXCLUDE rules. Never infer a different grammar from their
+    // text; the first later write serializes this explicit legacy mode.
+    if (const base::Value* format_value = record.Find(kHostMappingFormatKey)) {
+      const std::string* format = format_value->GetIfString();
+      if (!format || !HostMappingFormatFromString(
+                         *format, &environment.host_mapping_format)) {
+        environment.host_mapping_format = HostMappingFormat::kUnsupported;
+        unsupported_host_mapping_format = true;
+        parsed.diagnostics +=
+          "environment '" + environment.id +
+          "' has an unknown or malformed hostMappingFormat; "
+          "entering read-only mode; ";
+      }
+    } else {
+      environment.host_mapping_format = HostMappingFormat::kChromiumMap;
+    }
+
+    if (std::optional<double> created = record.FindDouble(kCreatedAtKey)) {
       environment.created_at = FromMillis(*created);
-    if (std::optional<double> updated = record.FindDouble(kUpdatedAtKey))
+    }
+    if (std::optional<double> updated = record.FindDouble(kUpdatedAtKey)) {
       environment.updated_at = FromMillis(*updated);
-    if (std::optional<bool> enabled = record.FindBool(kEnabledKey))
+    }
+    if (std::optional<bool> enabled = record.FindBool(kEnabledKey)) {
       environment.enabled = *enabled;
+    }
 
-    // A record whose host mappings cannot be parsed is kept but degraded to "no
-    // remapping": dropping it would orphan its tabs, and keeping the bad rules
-    // would let the network stack silently ignore them anyway (same outcome) while
-    // pretending the configuration is intact.
+    // A record whose host mappings cannot be parsed is kept with the original
+    // text so it remains visible and repairable. Runtime compilation fails closed
+    // rather than applying a partial rule set or silently dropping the source.
     std::string mapping_error;
-    if (!ValidateHostMappings(environment.host_mappings, &mapping_error)) {
+    if (environment.host_mapping_format != HostMappingFormat::kUnsupported &&
+        !ValidateHostMappings(environment.host_mapping_format,
+                              environment.host_mappings, &mapping_error)) {
       parsed.diagnostics +=
           "environment '" + environment.id +
           "' has unparseable host mappings, degraded to none: " +
           mapping_error + "; ";
-      environment.host_mappings.clear();
+      // Preserve the original text for repair/export. Runtime compilation will
+      // fail closed and the record remains visible to the user.
     }
 
     // Only the fields whose loss makes the record meaningless are fatal.
@@ -466,7 +521,9 @@ ParsedEnvironments ParseEnvironments(const std::string& json) {
   }
 
   parsed.rejected_count = rejected;
-  if (rejected > 0) {
+  if (unsupported_host_mapping_format) {
+    parsed.status = ParseStatus::kTooNew;
+  } else if (rejected > 0) {
     parsed.status = ParseStatus::kPartiallyInvalid;
   } else {
     parsed.status = ParseStatus::kOk;

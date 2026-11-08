@@ -28,5 +28,7 @@ const char kParraPocWindowStress[] = "parra-poc-window-stress";
 const char kParraPocSessionReadBackend[] = "parra-poc-session-read-backend";
 const char kParraPocTabMove[] = "parra-poc-tab-move";
 const char kParraPocLateTag[] = "parra-poc-late-tag";
+const char kParraPocHostMappingUpdate[] = "parra-poc-host-mapping-update";
+const char kParraPocPageState[] = "parra-poc-page-state";
 
 }  // namespace parra::switches

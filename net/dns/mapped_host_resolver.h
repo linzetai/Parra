@@ -55,6 +55,12 @@ class NET_EXPORT MappedHostResolver : public HostResolver {
     rules_.SetRulesFromString(rules_string);
   }
 
+  // Parra P3.4 PoC-1: the polymorphic form of the above, so a caller that only
+  // has a HostResolver* (as NetworkContext does) can still update the mapping
+  // while the resolver is in use. Always succeeds: this layer exists precisely
+  // to hold rules, and assigning an empty string is a valid "no mapping" state.
+  bool SetHostMappingRules(std::string_view rules) override;
+
   // HostResolver methods:
   std::unique_ptr<ResolveHostRequest> CreateRequest(
       url::SchemeHostPort host,

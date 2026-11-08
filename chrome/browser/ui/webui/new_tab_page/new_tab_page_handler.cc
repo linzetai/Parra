@@ -48,6 +48,10 @@
 #include "chrome/browser/new_tab_page/prefs/ntp_pref_names.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
+#include "chrome/browser/parra/environment_store.h"
+#include "chrome/browser/parra/environment_tag.h"
+#include "chrome/browser/parra/ui/environment_ui_util.h"
+#include "chrome/browser/parra/ui/resources/grit/parra_strings.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/background/ntp_custom_background_service.h"
 #include "chrome/browser/search/background/ntp_custom_background_service_factory.h"
@@ -605,6 +609,32 @@ void NewTabPageHandler::SetMostVisitedSettings(ntp_tiles::TileType type,
         type == ntp_tiles::TileType::kEnterpriseShortcuts);
     LogEvent(NTP_CUSTOMIZE_SHORTCUT_TOGGLE_TYPE);
   }
+}
+
+void NewTabPageHandler::GetParraEnvironmentIdentity(
+    GetParraEnvironmentIdentityCallback callback) {
+  std::string label;
+  std::string color;
+  const std::string id = parra::EnvironmentTag::Get(web_contents_);
+  auto* store = parra::EnvironmentStore::GetForProfile(
+      Profile::FromBrowserContext(web_contents_->GetBrowserContext()));
+  if (!id.empty() && store) {
+    parra::Environment environment;
+    if (const auto* stored = store->Find(id)) {
+      environment = *stored;
+    } else if (id == parra::kDefaultEnvironmentId) {
+      environment = store->PersonalEnvironment();
+    } else {
+      environment.id = id;
+    }
+    const auto name = parra::EnvironmentDisplayName(environment);
+    const SkColor value =
+        parra::EnvironmentDotColor(environment).value_or(SK_ColorGRAY);
+    label = base::UTF16ToUTF8(name);
+    color = base::StringPrintf("#%02x%02x%02x", SkColorGetR(value),
+                               SkColorGetG(value), SkColorGetB(value));
+  }
+  std::move(callback).Run(label, color);
 }
 
 void NewTabPageHandler::GetMostVisitedSettings(

@@ -105,6 +105,14 @@ template("chrome_repack_locales") {
       source_patterns +=
           [ "${root_gen_dir}/chrome/browser/indigo/resources/indigo_strings_" ]
       deps += [ "//chrome/browser/indigo/resources:indigo_strings" ]
+
+      # Parra environment switcher strings. MUST be listed here: a grit_strings
+      # target that is not repacked produces .pak files that are never loaded, so
+      # every IDS_* in it resolves to an empty string at runtime while everything
+      # still compiles and links without a warning.
+      source_patterns +=
+          [ "${root_gen_dir}/chrome/browser/parra/ui/resources/parra_strings_" ]
+      deps += [ "//chrome/browser/parra/ui/resources:parra_strings" ]
     }
     if (enable_builtin_search_provider_assets && !is_android) {
       source_patterns += [ "${root_gen_dir}/third_party/search_engines_data/search_engine_descriptions_strings_" ]

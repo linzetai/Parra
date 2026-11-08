@@ -25,11 +25,22 @@ namespace parra {
 // worse, made "this environment is gone" indistinguishable from "Parra is off".
 // ---------------------------------------------------------------------------
 
-// Process-level: whether Parra code paths are active at all.
+// BUILD-LEVEL: does this binary contain Parra environment support?
 //
-// False means every Parra seam must behave exactly like upstream Chromium. When
-// false, no tab can carry an environment and no Parra StoragePartition can be
-// created, so no fail-closed decision is ever needed.
+// This is a COMPILE-TIME capability, not a runtime configuration. Parra is
+// compiled into this browser unconditionally, so this is now `true` for every
+// process. It deliberately no longer consults EnvironmentRegistry: that made
+// "Parra exists" depend on a PoC command line switch, which meant a user who
+// configured environments through the UI lost ALL of them -- including tab
+// filtering -- the moment they launched without `--parra-poc-environments`.
+// See docs/parra/93 §2.1 for the failure this fixes.
+//
+// WHAT THIS DOES **NOT** ANSWER: "should this particular operation be
+// environment-aware?" That is a per-profile question (a profile with no
+// environments must browse exactly like stock Chromium), and it must be
+// answered with HasUserDefinedEnvironments() or with a per-window / per-model
+// query. Do not use this function as a stand-in for those; doing so
+// re-introduces the same conflation in a different place.
 bool IsEnabled();
 
 // Profile-level: whether `profile` has at least one user-defined (non-Personal)
@@ -39,17 +50,21 @@ bool IsEnabled();
 // with zero environments still has the reserved `personal` environment, and
 // ordinary browsing must keep working normally in it.
 //
-// Until Phase 3 P3.2 introduces EnvironmentStore, this delegates to the
-// process-level registry. That is a known, temporary coupling: the registry is
-// process-wide, so it cannot actually answer a per-profile question.
+// Answered by the profile's EnvironmentStore (P3.2+). Only a profile with no
+// store at all (unit-test shells, very early startup before the profile is
+// built) falls back to the command-line registry.
 bool HasUserDefinedEnvironments(Profile* profile);
 
-// Deprecated compatibility alias. Equal to IsEnabled().
+// Is `environment_id` an environment this profile actually has?
 //
-// TODO(parra, P3.6): remove after every call site has been moved to IsEnabled()
-// or HasUserDefinedEnvironments(). Kept only so P3.1 does not have to rewrite 27
-// call sites in one commit; see docs/parra/53 §7.
-bool IsParraPocEnabled();
+// The question every environment-aware code path really wants: "should this
+// operation behave the Parra way?". Answers true for `personal` always (it is
+// reserved and always usable) and for any stored, ENABLED environment.
+//
+// Deliberately takes the id rather than the Profile alone, because the answer
+// differs per environment: a window showing `personal` behaves like stock
+// Chromium even in a profile that has five other environments configured.
+bool ProfileHasEnvironment(Profile* profile, std::string_view environment_id);
 
 // ---------------------------------------------------------------------------
 // Partition resolution (Phase 3 T3.1.2)
@@ -58,8 +73,10 @@ bool IsParraPocEnabled();
 // Why a lookup answered the way it did. Recorded so a refusal can say which
 // input it refused, instead of "the environment was not found" for all of them.
 enum class EnvironmentLookup {
-  // Caller did not name an environment at all (empty id). The ONLY case that may
-  // fall back to the default partition -- a stock Chromium navigation must not be
+  // Caller did not name an environment at all (empty id). The ONLY case that
+  // may
+  // fall back to the default partition -- a stock Chromium navigation must not
+  // be
   // broken by Parra being configured.
   kNotSpecified,
   // The reserved `personal` environment: exists by definition, maps to the
@@ -70,7 +87,8 @@ enum class EnvironmentLookup {
   // Non-empty id that this profile does not define. Covers "deleted", "typo",
   // "config was reset" and "the manifest is gone".
   kUnknown,
-  // Defined but currently disabled (P3.2). Its partition and data are intact, so
+  // Defined but currently disabled (P3.2). Its partition and data are intact,
+  // so
   // the refusal is about SELECTION only -- a caller that reports this can say
   // "this environment is switched off" rather than "it does not exist".
   kDisabled,
@@ -81,9 +99,9 @@ enum class EnvironmentLookup {
 // WHY THIS EXISTS: the previous API returned a bare StoragePartitionConfig and
 // signalled every failure by returning the default one. A caller could not tell
 // "this page belongs to Personal" from "your environment is gone", so it
-// proceeded and silently loaded the page in Personal -- the exact isolation break
-// this project exists to prevent. `ok()` is now the only thing a caller may use
-// to decide whether it is allowed to proceed.
+// proceeded and silently loaded the page in Personal -- the exact isolation
+// break this project exists to prevent. `ok()` is now the only thing a caller
+// may use to decide whether it is allowed to proceed.
 struct PartitionResolution {
   // True only when the caller may proceed with `config`.
   bool ok() const { return failure.empty(); }
@@ -109,8 +127,8 @@ struct PartitionResolution {
 // anything else -> NOT ok, with `failure` naming the id (kUnknown / kDisabled).
 //
 // This is intentionally strict. Callers that have a source of environment
-// information they cannot fully trust (session data, a renderer-supplied string)
-// must use this and refuse on !ok().
+// information they cannot fully trust (session data, a renderer-supplied
+// string) must use this and refuse on !ok().
 PartitionResolution ResolvePartitionForEnvironment(
     Profile* profile,
     std::string_view environment_id);
@@ -120,9 +138,9 @@ PartitionResolution ResolvePartitionForEnvironment(
 //
 // FAIL-OPEN, legacy: returns the default config whenever the id cannot be
 // resolved. A caller that can report an error to its caller must use
-// ResolvePartitionForEnvironment() instead. Kept for the startup PoC paths, which
-// have no way to surface a refusal, and because removing it would change the
-// behaviour of code that legitimately only wants "a config" for a known id.
+// ResolvePartitionForEnvironment() instead. Kept for the startup PoC paths,
+// which have no way to surface a refusal, and because removing it would change
+// the behaviour of code that legitimately only wants "a config" for a known id.
 content::StoragePartitionConfig GetStoragePartitionConfigForEnvironment(
     Profile* profile,
     std::string_view environment_id);
@@ -132,14 +150,14 @@ content::StoragePartitionConfig GetStoragePartitionConfigForEnvironment(
 std::string_view GetEnvironmentIdForStoragePartition(
     const content::StoragePartitionConfig& config);
 
-// Returns the environment id STRUCTURALLY encoded in `config`, whether or not it
-// is currently defined. Empty for the default partition.
+// Returns the environment id STRUCTURALLY encoded in `config`, whether or not
+// it is currently defined. Empty for the default partition.
 //
 // Use this to answer "which Parra partition is this page really in?". The
 // definition-aware variant above answers a different question ("which live
 // environment is this page in?") and returns empty for a deleted environment --
-// which, if used for classification, would report a page living in parra/gone as
-// if it were in Personal.
+// which, if used for classification, would report a page living in parra/gone
+// as if it were in Personal.
 std::string GetEnvironmentIdFromPartitionConfig(
     const content::StoragePartitionConfig& config);
 
@@ -164,9 +182,11 @@ enum class EnvironmentResolution {
   kDedicatedPartition,
   // The id is unknown. Restore must NOT proceed with the saved URL.
   kUnknownEnvironment,
-  // The environment exists but is disabled. Its partition is still valid and its
+  // The environment exists but is disabled. Its partition is still valid and
+  // its
   // data is intact, so the tab is restored into it; it just cannot be activated
-  // until it is re-enabled. Distinct from kUnknownEnvironment because the page's
+  // until it is re-enabled. Distinct from kUnknownEnvironment because the
+  // page's
   // storage is NOT at risk here.
   kDisabledEnvironment,
 };
@@ -221,9 +241,9 @@ std::string GetHostMappingRulesForPartitionPath(
 //
 // PREFERRED. The process-wide variant above can only see command-line
 // definitions, so a profile whose environments were created through the store
-// (the whole point of P3.2) would get its rules from the wrong place and the page
-// would resolve to real DNS instead of the intended backend -- a silent routing
-// failure with no error anywhere.
+// (the whole point of P3.2) would get its rules from the wrong place and the
+// page would resolve to real DNS instead of the intended backend -- a silent
+// routing failure with no error anywhere.
 //
 // `relative_partition_path` is the argument
 // ContentBrowserClient::ConfigureNetworkContextParams() receives, which is the

@@ -39,6 +39,7 @@
 #include "chrome/browser/new_tab_page/new_tab_page_util.h"
 #include "chrome/browser/new_tab_page/prefs/ntp_pref_names.h"
 #include "chrome/browser/page_image_service/image_service_factory.h"
+#include "chrome/browser/parra/ui/resources/grit/parra_strings.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/background/ntp_custom_background_service_factory.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
@@ -68,6 +69,7 @@
 #include "chrome/browser/ui/webui/new_tab_page/new_tab_page_handler.h"
 #include "chrome/browser/ui/webui/new_tab_page/untrusted_source.h"
 #include "chrome/browser/ui/webui/page_not_available_for_guest/page_not_available_for_guest_ui.h"
+#include "chrome/browser/ui/webui/parra/parra_brand_icon.h"
 #include "chrome/browser/ui/webui/sanitized_image/sanitized_image_source.h"
 #include "chrome/browser/ui/webui/searchbox/realbox_handler.h"
 #include "chrome/browser/ui/webui/theme_source.h"
@@ -79,6 +81,7 @@
 #include "chrome/common/search/instant_types.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/branded_strings.h"
+#include "chrome/grit/chrome_unscaled_resources.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/new_tab_page_resources.h"
 #include "chrome/grit/new_tab_page_resources_map.h"
@@ -257,6 +260,18 @@ base::DictValue NewTabPageUI::GetLoadTimeData(
     Profile* profile,
     bool session_allows_drag_and_drop) {
   base::DictValue dict;
+
+  dict.Set("parraNtpAriaLabel",
+           l10n_util::GetStringUTF16(IDS_PARRA_NTP_ARIA_LABEL));
+  dict.Set("parraNtpLogoAlt",
+           l10n_util::GetStringUTF16(IDS_PARRA_NTP_LOGO_ALT));
+  dict.Set("parraNtpSubtitle",
+           l10n_util::GetStringUTF16(IDS_PARRA_NTP_SUBTITLE));
+  dict.Set("parraCurrentSpace",
+           l10n_util::GetStringUTF16(IDS_PARRA_NTP_CURRENT_SPACE));
+  dict.Set("parraTopSites", l10n_util::GetStringUTF16(IDS_PARRA_NTP_TOP_SITES));
+  dict.Set("parraTopSitesHint",
+           l10n_util::GetStringUTF16(IDS_PARRA_NTP_TOP_SITES_HINT));
 
   ui::Accelerator undo_accelerator(ui::VKEY_Z, ui::EF_PLATFORM_ACCELERATOR);
   dict.Set("undoDescription",
@@ -898,6 +913,7 @@ content::WebUIDataSource* CreateAndAddNewTabPageUiHtmlSource(
 
   webui::SetupWebUIDataSource(source, kNewTabPageResources,
                               IDR_NEW_TAB_PAGE_NEW_TAB_PAGE_HTML);
+  source->AddResourcePath("parra-logo.png", IDR_PARRA_BRAND_ICON);
 
 #if !BUILDFLAG(OPTIMIZE_WEBUI)
   source->AddResourcePaths(kNewTabSharedResources);
@@ -1489,8 +1505,7 @@ void NewTabPageUI::OnLoad() {
 // static
 scoped_refptr<base::RefCountedMemory> NewTabPageUI::GetFaviconResourceBytes(
     ui::ResourceScaleFactor scale_factor) {
-  return ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytesForScale(
-      IDR_NTP_FAVICON, scale_factor);
+  return GetParraFaviconBytes(scale_factor);
 }
 
 std::string_view NewTabPageUI::GetNtpPromoType() {

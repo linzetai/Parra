@@ -10,12 +10,15 @@
 #include "base/memory/raw_ref.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
+#include "chrome/browser/parra/ui/environment_switcher_button.h"
+#include "chrome/browser/parra/ui/environment_ui_util.h"
 #include "chrome/browser/themes/custom_theme_supplier.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/tabs/tab_style.h"
+#include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/browser_widget.h"
 #include "chrome/browser/ui/views/frame/safe_invoke/safe_invoke.h"
@@ -32,6 +35,7 @@
 #include "ui/gfx/geometry/size_f.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/native_theme/native_theme.h"
 #include "ui/views/background.h"
 #include "ui/views/layout/layout_types.h"
 #include "ui/views/view.h"
@@ -257,6 +261,16 @@ SkColor BrowserFrameView::GetCaptionColor(
 
 SkColor BrowserFrameView::GetFrameColor(
     BrowserFrameActiveState active_state) const {
+  if (GetNativeTheme()->forced_colors() ==
+      ui::ColorProviderKey::ForcedColors::kNone) {
+    auto* button = static_cast<parra::EnvironmentSwitcherButton*>(
+        GetBrowserView()->GetViewByID(VIEW_ID_PARRA_ENVIRONMENT_SWITCHER));
+    if (button && button->GetVisible() && button->environment_color()) {
+      return parra::EnvironmentSurfaceColor(
+          *button->environment_color(),
+          GetColorProvider()->GetColor(kColorToolbar));
+    }
+  }
   return GetColorProvider()->GetColor(ShouldPaintAsActiveForState(active_state)
                                           ? ui::kColorFrameActive
                                           : ui::kColorFrameInactive);

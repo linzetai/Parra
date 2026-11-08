@@ -14,18 +14,15 @@
   </outputs>
   <release seq="1">
     <includes>
-      <if expr="is_linux">
-        <then>
-          <include name="IDR_PRODUCT_LOGO_64" file="${branding_path_component}/linux/product_logo_64.png" type="BINDATA" />
-          <include name="IDR_PRODUCT_LOGO_128" file="${branding_path_component}/linux/product_logo_128.png" type="BINDATA" />
-          <include name="IDR_PRODUCT_LOGO_256" file="${branding_path_component}/linux/product_logo_256.png" type="BINDATA" />
-        </then>
-        <else>
-          <include name="IDR_PRODUCT_LOGO_64" file="${branding_path_component}/product_logo_64.png" type="BINDATA" />
-          <include name="IDR_PRODUCT_LOGO_128" file="${branding_path_component}/product_logo_128.png" type="BINDATA" />
-          <include name="IDR_PRODUCT_LOGO_256" file="${branding_path_component}/product_logo_256.png" type="BINDATA" />
-        </else>
-      </if>
+      <include name="IDR_PARRA_BRAND_ICON" file="parra/parra-logo-128.png" type="BINDATA" />
+      <include name="IDR_PARRA_FAVICON_16" file="parra/parra-favicon-16.png" type="BINDATA" />
+      <include name="IDR_PARRA_FAVICON_20" file="parra/parra-favicon-20.png" type="BINDATA" />
+      <include name="IDR_PARRA_FAVICON_24" file="parra/parra-favicon-24.png" type="BINDATA" />
+      <include name="IDR_PARRA_FAVICON_32" file="parra/parra-favicon-32.png" type="BINDATA" />
+      <include name="IDR_PARRA_FAVICON_48" file="parra/parra-favicon-48.png" type="BINDATA" />
+      <include name="IDR_PRODUCT_LOGO_64" file="parra/parra-logo-64.png" type="BINDATA" />
+      <include name="IDR_PRODUCT_LOGO_128" file="parra/parra-logo-128.png" type="BINDATA" />
+      <include name="IDR_PRODUCT_LOGO_256" file="parra/parra-logo-256.png" type="BINDATA" />
       <if expr="is_macosx">
         <if expr="_is_chrome_for_testing_branded">
           <then>
@@ -84,14 +81,14 @@
               <include name="IDR_PRODUCT_LOGO_128_CFT_SHORTCUTS" file="google_chrome/google_chrome_for_testing/product_logo_128.png" type="BINDATA" />
             </then>
             <else> <!-- not _is_chrome_for_testing_branded -->
-              <include name="IDR_PRODUCT_LOGO_SVG" file="${branding_path_component}/product_logo.svg" type="BINDATA" />
-              <include name="IDR_PRODUCT_LOGO_ANIMATION_SVG" file="${branding_path_component}/product_logo_animation.svg" type="BINDATA" />
+              <include name="IDR_PRODUCT_LOGO_SVG" file="parra/Parra-icon.svg" type="BINDATA" />
+              <include name="IDR_PRODUCT_LOGO_ANIMATION_SVG" file="parra/Parra-icon.svg" type="BINDATA" />
             </else>
           </if> <!-- _is_chrome_for_testing_branded -->
-            <include name="IDR_PRODUCT_LOGO_16_SHORTCUTS" file="chromium/product_logo_16.png" type="BINDATA" />
-            <include name="IDR_PRODUCT_LOGO_24_SHORTCUTS" file="chromium/product_logo_24.png" type="BINDATA" />
-            <include name="IDR_PRODUCT_LOGO_64_SHORTCUTS" file="chromium/product_logo_64.png" type="BINDATA" />
-            <include name="IDR_PRODUCT_LOGO_128_SHORTCUTS" file="chromium/product_logo_128.png" type="BINDATA" />
+            <include name="IDR_PRODUCT_LOGO_16_SHORTCUTS" file="parra/parra-favicon-16.png" type="BINDATA" />
+            <include name="IDR_PRODUCT_LOGO_24_SHORTCUTS" file="parra/parra-favicon-24.png" type="BINDATA" />
+            <include name="IDR_PRODUCT_LOGO_64_SHORTCUTS" file="parra/parra-logo-64.png" type="BINDATA" />
+            <include name="IDR_PRODUCT_LOGO_128_SHORTCUTS" file="parra/parra-logo-128.png" type="BINDATA" />
         </else>
       </if> <!-- _google_chrome -->
       <!-- NOTE: product_logo_*.* files beyond what's listed above are

@@ -1,0 +1,71 @@
+# Copyright 2026 The Parra Authors
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# M1: the environment switcher.
+#
+# WHY A SEPARATE TARGET FROM :parra_tabs
+#
+# This target depends on //ui/views and on //chrome/browser/ui/color, i.e. the
+# Views layer. :parra_tabs deliberately does not, because TabStripModel-based code
+# (and the sessions layer) depends on it. Keeping the Views dependency in its own
+# target means the low layers stay buildable without Views and without risking a
+# GN cycle.
+#
+# DEPENDENCY DIRECTION (verified with `gn desc`, not by reading files)
+#
+#   //chrome/browser/ui/views/toolbar  ->  this target      ALLOWED
+#   this target                      ->  //chrome/browser/parra:parra_tabs   ALLOWED
+#   //chrome/browser/ui/views/tabs:tab_strip_impl  ->  this target   FORBIDDEN
+#
+# The last edge is forbidden because tab_strip_impl is reachable from
+# :parra_tabs (it uses TabStripModel), so depending back on a target that itself
+# depends on :parra_tabs would close the loop. That is why this directory holds
+# the switcher (mounted in the toolbar) and NOT any tab-strip-owned view.
+source_set("ui") {
+  sources = [
+    "environment_menu_model.cc",
+    "environment_menu_model.h",
+    "environment_switcher_button.cc",
+    "environment_switcher_button.h",
+    "environment_ui_util.cc",
+    "environment_ui_util.h",
+    "external_link_router.cc",
+    "external_link_router.h",
+    "parra_settings_window.cc",
+    "parra_settings_window.h",
+  ]
+
+  deps = [
+    "//base",
+    "//chrome/browser/parra:parra",
+    "//chrome/browser/parra:parra_tabs",
+    "//chrome/browser/parra/ui/resources:parra_strings",
+    "//chrome/browser/profiles:profile",
+    "//chrome/browser/ui:view_ids",
+    "//chrome/browser/ui:browser_tabstrip",
+    "//chrome/browser/ui/browser_window",
+    "//chrome/browser/ui/color:color_headers",
+    "//chrome/browser/ui/tabs:tab_strip",
+    "//chrome/browser/ui/views/toolbar:toolbar_button",
+    # For chrome::kChromeUIParraURL / kChromeUIParraHost: the "管理环境" row opens
+    # that page, so the constant must come from the one place that defines it.
+    "//chrome/common:constants",
+    "//components/tabs:public",
+    "//components/constrained_window",
+    "//components/prefs",
+    # The "管理环境" row navigates a tab and re-activates an existing one, so this
+    # needs WebContents and WindowOpenDisposition.
+    "//content/public/browser",
+    "//content/public/common",
+    "//ui/base",
+    "//ui/base/metadata",
+    "//ui/color",
+    "//ui/gfx",
+    "//ui/menus",
+    "//ui/views",
+    "//ui/views/controls/webview",
+    "//skia",
+    "//url",
+  ]
+}

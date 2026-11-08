@@ -25,6 +25,7 @@
 #include "chrome/browser/ui/webui/crashes/crashes_ui.h"
 #include "chrome/browser/ui/webui/download_internals/download_internals_ui.h"
 #include "chrome/browser/ui/webui/flags/flags_ui.h"
+#include "chrome/browser/ui/webui/parra/parra_brand_icon.h"
 #include "chrome/browser/ui/webui/version/version_ui.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/common/pref_names.h"
@@ -423,6 +424,10 @@ ChromeWebUIControllerFactory::GetFaviconResourceBytes(
     // Android doesn't have settings_util.cc, so load the resource directly.
     return ui::ResourceBundle::GetSharedInstance()
         .LoadDataResourceBytesForScale(IDR_SETTINGS_FAVICON, scale_factor);
+  }
+
+  if (page_url.host() == chrome::kChromeUIParraHost) {
+    return GetParraFaviconBytes(scale_factor);
   }
 
   if (page_url.host() == chrome::kChromeUIDownloadsHost) {

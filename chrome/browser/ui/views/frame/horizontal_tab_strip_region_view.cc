@@ -4,18 +4,24 @@
 
 #include "chrome/browser/ui/views/frame/horizontal_tab_strip_region_view.h"
 
+#include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
+#include "base/logging.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
 #include "chrome/browser/glic/public/glic_enabling.h"
+#include "chrome/browser/parra/ui/environment_switcher_button.h"
+#include "chrome/browser/parra/ui/environment_ui_util.h"
+#include "chrome/browser/parra/window_environment_state.h"
 #include "chrome/browser/ui/actions/chrome_action_id.h"
 #include "chrome/browser/ui/browser_actions.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/frame/window_frame_util.h"
 #include "chrome/browser/ui/immersive/immersive_mode_controller.h"
 #include "chrome/browser/ui/layout_constants.h"
@@ -55,25 +61,70 @@
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/ui_base_features.h"
+#include "ui/color/color_provider.h"
 #include "ui/compositor/layer.h"
+#include "ui/gfx/canvas.h"
+#include "ui/gfx/color_utils.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/point.h"
+#include "ui/native_theme/native_theme.h"
 #include "ui/views/accessible_pane_view.h"
 #include "ui/views/actions/action_view_controller.h"
+#include "ui/views/background.h"
 #include "ui/views/border.h"
 #include "ui/views/cascading_property.h"
+#include "ui/views/controls/scroll_view.h"
 #include "ui/views/interaction/view_subregion_anchor.h"
 #include "ui/views/layout/flex_layout.h"
 #include "ui/views/layout/flex_layout_types.h"
 #include "ui/views/view.h"
 #include "ui/views/view_class_properties.h"
 #include "ui/views/view_utils.h"
+#include "ui/views/widget/widget.h"
 
 #if BUILDFLAG(IS_MAC)
 inline constexpr int kTabStripRegionInternalPaddingMac = 12;
 #endif
 
 namespace {
+
+class EnvironmentTabColor : public views::CascadingProperty<SkColor> {
+ public:
+  explicit EnvironmentTabColor(SkColor color) : color_(color) {}
+  SkColor GetValue(const views::View* view) const override { return color_; }
+
+ private:
+  SkColor color_;
+};
+
+class EnvironmentStripBackground : public views::Background {
+ public:
+  explicit EnvironmentStripBackground(SkColor color) : color_(color) {}
+  void Paint(gfx::Canvas* canvas, views::View* view) const override {
+    if (!view->GetColorProvider() ||
+        view->GetNativeTheme()->forced_colors() !=
+            ui::ColorProviderKey::ForcedColors::kNone) {
+      return;
+    }
+    const SkColor neutral = view->GetColorProvider()->GetColor(kColorToolbar);
+    const auto tokens = parra::MakeBrowserUiTokens(color_, neutral);
+    canvas->FillRect(view->GetLocalBounds(), tokens.surface);
+    canvas->FillRect(gfx::Rect(0, 0, view->width(), 3), tokens.accent);
+  }
+
+ private:
+  SkColor color_;
+};
+
+void UpdateEnvironmentStripBackground(views::View* region, SkColor color) {
+  views::SetCascadingProperty(region, kParraEnvironmentTabColor,
+                              std::make_unique<EnvironmentTabColor>(color));
+  region->SetBackground(std::make_unique<EnvironmentStripBackground>(color));
+  region->SchedulePaint();
+  if (region->GetWidget()) {
+    region->GetWidget()->GetRootView()->SchedulePaint();
+  }
+}
 
 class FrameGrabHandle : public views::View {
   METADATA_HEADER(FrameGrabHandle, views::View)
@@ -169,6 +220,16 @@ HorizontalTabStripRegionViewOld::HorizontalTabStripRegionViewOld(
   BrowserWindowInterface* const browser = browser_view->browser();
 
   if (browser &&
+      browser->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL) {
+    parra_environment_switcher_ = AddChildView(
+        std::make_unique<parra::EnvironmentSwitcherButton>(browser));
+    parra_environment_switcher_->SetProperty(views::kCrossAxisAlignmentKey,
+                                             views::LayoutAlignment::kStretch);
+    parra_environment_switcher_->SetThemeChangedCallback(base::BindRepeating(
+        &UpdateEnvironmentStripBackground, base::Unretained(this)));
+  }
+
+  if (browser &&
       (browser->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL)) {
     combo_button_ = AddChildView(std::make_unique<TabStripComboButton>(
         browser, TabStripComboButton::Context::kHorizontalTabStrip));
@@ -179,7 +240,6 @@ HorizontalTabStripRegionViewOld::HorizontalTabStripRegionViewOld(
     // when it reports a preferred size of 0. See b/567198990.
     combo_button_->SetProperty(views::kViewIgnoredByLayoutKey, true);
   }
-
 
   // Add and configure the TabStripComboButton.
   std::unique_ptr<TabStripActionContainer> tab_strip_action_container;
@@ -198,7 +258,17 @@ HorizontalTabStripRegionViewOld::HorizontalTabStripRegionViewOld(
     }
   }
 
-  tab_strip_ = AddChildView(CreateTabStrip(this, browser_view));
+  auto scroll_container = std::make_unique<views::ScrollView>();
+  scroll_container->SetUseContentsPreferredSize(false);
+  scroll_container->SetBackgroundColor(std::nullopt);
+  scroll_container->SetHorizontalScrollBarMode(
+      views::ScrollView::ScrollBarMode::kHiddenButEnabled);
+  scroll_container->SetVerticalScrollBarMode(
+      views::ScrollView::ScrollBarMode::kDisabled);
+  scroll_container->SetTreatAllScrollEventsAsHorizontal(true);
+  tab_strip_scroll_container_ = AddChildView(std::move(scroll_container));
+  tab_strip_ = tab_strip_scroll_container_->SetContents(
+      CreateTabStrip(this, browser_view));
 
   // Allow the |tab_strip_| to grow into the free space available in
   // the HorizontalTabStripRegionViewOld.
@@ -206,7 +276,8 @@ HorizontalTabStripRegionViewOld::HorizontalTabStripRegionViewOld(
       views::FlexSpecification(views::LayoutOrientation::kHorizontal,
                                views::MinimumFlexSizeRule::kScaleToZero,
                                views::MaximumFlexSizeRule::kPreferred);
-  tab_strip_->SetProperty(views::kFlexBehaviorKey, tab_strip_flex_spec);
+  tab_strip_scroll_container_->SetProperty(views::kFlexBehaviorKey,
+                                           tab_strip_flex_spec);
 
   if (ShouldShowNewTabButton(browser)) {
     std::unique_ptr<TabStripControlButton> tab_strip_control_button =
@@ -283,7 +354,7 @@ bool HorizontalTabStripRegionViewOld::IsPositionInWindowCaption(
   // the |tab_strip_| and the |tab_strip_| but not over the same
   // pixels. This could lead to this returning false when it should be returning
   // true.
-  if (IsHitInView(tab_strip_, point)) {
+  if (IsHitInView(tab_strip_scroll_container_, point)) {
     gfx::RectF rect_in_target_coords_f(gfx::Rect(point, gfx::Size(1, 1)));
     View::ConvertRectToTarget(this, tab_strip_, &rect_in_target_coords_f);
     return tab_strip_->IsRectInWindowCaption(
@@ -293,8 +364,9 @@ bool HorizontalTabStripRegionViewOld::IsPositionInWindowCaption(
   // The child could have a non-rectangular shape, so if the rect is not in the
   // visual portions of the child view we treat it as a click to the caption.
   for (View* const child : children()) {
-    if (child != tab_strip_ && child != reserved_grab_handle_space_ &&
-        child->GetVisible() && IsHitInView(child, point)) {
+    if (child != tab_strip_scroll_container_ &&
+        child != reserved_grab_handle_space_ && child->GetVisible() &&
+        IsHitInView(child, point)) {
       return false;
     }
   }
@@ -305,8 +377,12 @@ bool HorizontalTabStripRegionViewOld::IsPositionInWindowCaption(
 views::View::Views HorizontalTabStripRegionViewOld::GetChildrenInZOrder() {
   views::View::Views children;
 
-  if (tab_strip_) {
-    children.emplace_back(tab_strip_.get());
+  if (parra_environment_switcher_) {
+    children.emplace_back(parra_environment_switcher_.get());
+  }
+
+  if (tab_strip_scroll_container_) {
+    children.emplace_back(tab_strip_scroll_container_.get());
   }
 
   if (new_tab_button_) {
@@ -336,13 +412,45 @@ void HorizontalTabStripRegionViewOld::Layout(PassKey) {
     return;
   }
 
+  if (parra_environment_switcher_) {
+    parra_environment_switcher_->SetAvailableStripWidth(width());
+  }
   UpdateTabStripMargin();
   LayoutSuperclass<views::AccessiblePaneView>(this);
+
+  int visible_tabs = 0;
+  for (int i = 0; i < tab_strip_->GetTabCount(); ++i) {
+    if (tab_strip_->tab_at(i)->GetVisible()) {
+      ++visible_tabs;
+    }
+  }
+  constexpr int kMinimumReadableTabWidth = 112;
+  const int viewport_width = tab_strip_scroll_container_->width();
+  const int preferred_width = tab_strip_->GetPreferredSize({}).width();
+  const int content_width = std::min(
+      preferred_width,
+      std::max(viewport_width, visible_tabs * kMinimumReadableTabWidth));
+  tab_strip_->SetBoundsRect(
+      gfx::Rect(0, 0, content_width, tab_strip_scroll_container_->height()));
+  tab_strip_scroll_container_->DeprecatedLayoutImmediately();
+  int visible_active_index = -1;
+  for (int i = 0; i < tab_strip_->GetTabCount(); ++i) {
+    Tab* tab = tab_strip_->tab_at(i);
+    if (tab->GetVisible() && tab->IsActive()) {
+      visible_active_index = i;
+      break;
+    }
+  }
+  if (visible_active_index != last_visible_active_tab_index_) {
+    last_visible_active_tab_index_ = visible_active_index;
+    if (visible_active_index >= 0) {
+      tab_strip_->tab_at(visible_active_index)->ScrollViewToVisible();
+    }
+  }
 
   if (combo_button_) {
     AdjustViewBoundsRect(combo_button_, 0);
   }
-
   views::View* button_to_paint_to_layer = new_tab_button_;
 
   if (button_to_paint_to_layer) {
@@ -352,7 +460,7 @@ void HorizontalTabStripRegionViewOld::Layout(PassKey) {
 
     // The y position is measured from the bottom of the tabstrip, and then
     // padding and button height are removed.
-    int x = tab_strip_->bounds().right() -
+    int x = tab_strip_scroll_container_->bounds().right() -
             TabStyle::Get()->GetBottomCornerRadius() +
             GetLayoutConstant(LayoutConstant::kTabStripPadding) +
             GetLayoutConstant(LayoutConstant::kNewTabButtonLeadingMargin);
@@ -363,6 +471,18 @@ void HorizontalTabStripRegionViewOld::Layout(PassKey) {
     // If the tabsearch button is before the tabstrip container, then manually
     // set the bounds.
     button_to_paint_to_layer->SetBoundsRect(button_new_bounds);
+  }
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          "parra-ui-layout-audit") &&
+      parra_environment_switcher_) {
+    LOG(INFO) << "PARRA-UI-BOUNDS old region=" << bounds().ToString()
+              << " switcher="
+              << parra_environment_switcher_->bounds().ToString()
+              << " tabs=" << tab_strip_scroll_container_->bounds().ToString()
+              << " tab_contents=" << tab_strip_->bounds().ToString()
+              << " newtab="
+              << (new_tab_button_ ? new_tab_button_->bounds().ToString()
+                                  : "none");
   }
 }
 
@@ -411,12 +531,17 @@ void HorizontalTabStripRegionViewOld::ChildPreferredSizeChanged(
 }
 
 gfx::Size HorizontalTabStripRegionViewOld::GetMinimumSize() const {
-  gfx::Size tab_strip_min_size = tab_strip_->GetMinimumSize();
+  gfx::Size tab_strip_min_size = tab_strip_scroll_container_->GetMinimumSize();
   // Cap the tabstrip minimum width to a reasonable value so browser windows
   // aren't forced to grow arbitrarily wide.
   const int max_min_width = 520;
   tab_strip_min_size.set_width(
       std::min(max_min_width, tab_strip_min_size.width()));
+  if (parra_environment_switcher_ &&
+      parra_environment_switcher_->GetVisible()) {
+    tab_strip_min_size.Enlarge(
+        parra_environment_switcher_->GetMinimumSize().width(), 0);
+  }
   return tab_strip_min_size;
 }
 
@@ -441,9 +566,15 @@ void HorizontalTabStripRegionViewOld::InitializeTabStrip() {
   }
 
   tab_strip_->Initialize();
+  tab_strip_->SetAvailableWidthCallback(base::BindRepeating(
+      [](TabStrip* strip) { return std::max(1, strip->width()); },
+      base::Unretained(tab_strip_)));
   static_cast<BrowserTabStripController*>(tab_strip_->controller())
       ->InitFromModel(tab_strip_);
   tab_strip_set_ = true;
+  if (parra_environment_switcher_) {
+    parra_environment_switcher_->BindEnvironmentState();
+  }
 }
 
 void HorizontalTabStripRegionViewOld::ResetTabStrip() {
@@ -673,7 +804,7 @@ void HorizontalTabStripRegionViewOld::UpdateTabStripMargin() {
   UpdateButtonBorders();
 
   if (tab_strip_left_margin.has_value() || tab_strip_right_margin.has_value()) {
-    tab_strip_->SetProperty(
+    tab_strip_scroll_container_->SetProperty(
         views::kMarginsKey,
         gfx::Insets::TLBR(0, tab_strip_left_margin.value_or(0), 0,
                           tab_strip_right_margin.value_or(0)));
@@ -683,7 +814,8 @@ void HorizontalTabStripRegionViewOld::UpdateTabStripMargin() {
 void HorizontalTabStripRegionViewOld::AdjustViewBoundsRect(View* view,
                                                            int offset) {
   const gfx::Size view_size = view->GetPreferredSize();
-  const int x = tab_strip_->x() + TabStyle::Get()->GetBottomCornerRadius() -
+  const int x = tab_strip_scroll_container_->x() +
+                TabStyle::Get()->GetBottomCornerRadius() -
                 GetLayoutConstant(LayoutConstant::kTabStripPadding) -
                 view_size.width() - offset;
   const gfx::Rect new_bounds =
@@ -719,6 +851,18 @@ HorizontalTabStripRegionViewNew::HorizontalTabStripRegionViewNew(
       ->SetOrientation(views::LayoutOrientation::kHorizontal);
 
   BrowserWindowInterface* const browser = browser_view->browser();
+
+  parra_window_state_ = parra::WindowEnvironmentState::CreateFor(browser);
+
+  if (browser &&
+      browser->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL) {
+    parra_environment_switcher_ = AddChildView(
+        std::make_unique<parra::EnvironmentSwitcherButton>(browser));
+    parra_environment_switcher_->SetProperty(views::kCrossAxisAlignmentKey,
+                                             views::LayoutAlignment::kStretch);
+    parra_environment_switcher_->SetThemeChangedCallback(base::BindRepeating(
+        &UpdateEnvironmentStripBackground, base::Unretained(this)));
+  }
 
   std::unique_ptr<TabStripActionContainer> tab_strip_action_container;
   if (browser &&
@@ -770,6 +914,9 @@ HorizontalTabStripRegionViewNew::HorizontalTabStripRegionViewNew(
 }
 
 HorizontalTabStripRegionViewNew::~HorizontalTabStripRegionViewNew() {
+  if (parra_environment_switcher_) {
+    RemoveChildViewT(std::exchange(parra_environment_switcher_, nullptr));
+  }
   if (tab_strip_action_container_) {
     RemoveChildViewT(std::exchange(tab_strip_action_container_, nullptr));
   }
@@ -783,6 +930,10 @@ HorizontalTabStripRegionViewNew::~HorizontalTabStripRegionViewNew() {
 
 bool HorizontalTabStripRegionViewNew::IsPositionInWindowCaption(
     const gfx::Point& point) {
+  if (parra_environment_switcher_ &&
+      IsHitInView(parra_environment_switcher_, point)) {
+    return false;
+  }
   if (new_tab_button_ && IsHitInView(new_tab_button_, point)) {
     return false;
   }
@@ -802,6 +953,9 @@ bool HorizontalTabStripRegionViewNew::IsPositionInWindowCaption(
 
 views::View::Views HorizontalTabStripRegionViewNew::GetChildrenInZOrder() {
   views::View::Views children;
+  if (parra_environment_switcher_) {
+    children.emplace_back(parra_environment_switcher_.get());
+  }
   if (tab_strip_view()) {
     children.emplace_back(tab_strip_view());
   }
@@ -840,11 +994,24 @@ bool HorizontalTabStripRegionViewNew::HasLeadingButtons() const {
 }
 
 void HorizontalTabStripRegionViewNew::Layout(PassKey) {
+  if (parra_environment_switcher_) {
+    parra_environment_switcher_->SetAvailableStripWidth(width());
+  }
   UpdateTabStripMargin();
   LayoutSuperclass<BaseTabStripRegionView>(this);
 
   if (combo_button_) {
     AdjustViewBoundsRect(combo_button_, 0);
+  }
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          "parra-ui-layout-audit") &&
+      parra_environment_switcher_ && tab_strip_view()) {
+    LOG(INFO) << "PARRA-UI-BOUNDS new region=" << bounds().ToString()
+              << " switcher="
+              << parra_environment_switcher_->bounds().ToString()
+              << " tabs=" << tab_strip_view()->bounds().ToString() << " newtab="
+              << (new_tab_button_ ? new_tab_button_->bounds().ToString()
+                                  : "none");
   }
 }
 
@@ -856,6 +1023,11 @@ gfx::Size HorizontalTabStripRegionViewNew::GetMinimumSize() const {
     const int max_min_width = 520;
     tab_strip_min_size.set_width(
         std::min(max_min_width, tab_strip_min_size.width()));
+    if (parra_environment_switcher_ &&
+        parra_environment_switcher_->GetVisible()) {
+      tab_strip_min_size.Enlarge(
+          parra_environment_switcher_->GetMinimumSize().width(), 0);
+    }
     return tab_strip_min_size;
   }
   return gfx::Size();
@@ -864,7 +1036,12 @@ gfx::Size HorizontalTabStripRegionViewNew::GetMinimumSize() const {
 gfx::Size HorizontalTabStripRegionViewNew::CalculatePreferredSize(
     const views::SizeBounds& available_size) const {
   if (tab_strip_view()) {
-    return tab_strip_view()->GetPreferredSize(available_size);
+    gfx::Size size = tab_strip_view()->GetPreferredSize(available_size);
+    if (parra_environment_switcher_ &&
+        parra_environment_switcher_->GetVisible()) {
+      size.Enlarge(parra_environment_switcher_->GetPreferredSize().width(), 0);
+    }
+    return size;
   }
   return gfx::Size();
 }
@@ -994,7 +1171,8 @@ void HorizontalTabStripRegionViewNew::AddTabStripView(
       views::kFlexBehaviorKey,
       views::FlexSpecification(views::MinimumFlexSizeRule::kScaleToZero,
                                views::MaximumFlexSizeRule::kPreferred));
-  const size_t index = combo_button_ ? 1 : 0;
+  const size_t index =
+      (combo_button_ ? 1 : 0) + (parra_environment_switcher_ ? 1 : 0);
   AddChildViewAt(std::move(view), index);
   UpdateTabStripMargin();
 }

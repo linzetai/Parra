@@ -12,6 +12,8 @@ source_set("parra") {
   sources = [
     "environment.cc",
     "environment.h",
+    "host_mapping_compiler.cc",
+    "host_mapping_compiler.h",
     "environment_registry.cc",
     "environment_registry.h",
     "environment_serialization.cc",
@@ -43,6 +45,7 @@ source_set("parra") {
     "//chrome/browser/profiles:profile",
     "//components/keyed_service/core",
     "//components/prefs",
+    "//components/tabs:public",
     "//content/public/browser",
     "//crypto",
     "//net",
@@ -89,10 +92,13 @@ source_set("parra_tabs") {
 # layer, so only //chrome/browser:core may depend on it.
 source_set("parra_startup") {
   sources = [
+    "parra_host_mapping_poc.cc",
+    "parra_host_mapping_poc.h",
     "parra_index_mapper_selftest.cc",
     "parra_index_mapper_selftest.h",
     "parra_lifecycle_poc.cc",
     "parra_lifecycle_poc.h",
+    "parra_page_state_poc.cc",
     "parra_p31_selftest.cc",
     "parra_p31_selftest.h",
     "parra_p32_selftest.cc",
@@ -111,11 +117,17 @@ source_set("parra_startup") {
     "//base",
     "//chrome/browser/profiles:profile",
     "//chrome/browser/ui/browser_window",
+    "//chrome/browser/ui/browser_window:create_browser_window",
+    "//chrome/browser/ui:browser_commands",
     "//chrome/browser/ui/navigator:navigator",
     "//chrome/browser/ui/tabs:tab_enums",
     "//chrome/browser/ui/tabs:tab_strip_impl",
     "//components/tabs:public",
     "//content/public/browser",
+    "//net",
+    "//net:net",
+    "//services/network/public/cpp",
+    "//services/network/public/mojom",
     "//ui/base",
     "//url",
   ]

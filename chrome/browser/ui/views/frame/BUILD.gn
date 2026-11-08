@@ -491,6 +491,7 @@ source_set("horizontal_tab_strip_region_view") {
   deps = [
     ":browser_view_header",
     ":safe_invoke",
+    "//chrome/browser/parra/ui",
     "//chrome/app:generated_resources",
     "//chrome/browser/glic",
     "//chrome/browser/ui:browser_actions",
@@ -3063,6 +3064,8 @@ source_set("browser_frame_view_impl") {
     "//build:buildflag_header_h",
     "//chrome/app/theme:theme_resources",
     "//chrome/browser/themes",
+    "//chrome/browser/parra/ui",
+    "//chrome/browser/ui:view_ids",
     "//chrome/browser/ui:browser_element_identifiers",
     "//chrome/browser/ui/color:color_headers",
     "//chrome/browser/ui/tabs",

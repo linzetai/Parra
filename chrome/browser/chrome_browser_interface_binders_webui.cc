@@ -64,10 +64,14 @@
 #include "chrome/browser/ui/webui/critical_actions/critical_actions_ui.h"
 #include "chrome/browser/ui/webui/indigo_internals/indigo_internals.mojom.h"
 #include "chrome/browser/ui/webui/indigo_internals/indigo_internals_ui.h"
+#include "chrome/browser/ui/webui/omnibox_everywhere/omnibox_everywhere_ui.h"
 #include "chrome/browser/ui/webui/omnibox_popup/mojom/omnibox_popup.mojom.h"
 #include "chrome/browser/ui/webui/omnibox_popup/mojom/omnibox_popup_aim.mojom.h"
 #include "chrome/browser/ui/webui/omnibox_popup/omnibox_popup_ui.h"
-#include "chrome/browser/ui/webui/omnibox_everywhere/omnibox_everywhere_ui.h"
+// Parra: chrome://parra environment management page -- its PageHandlerFactory
+// binder is registered in PopulateChromeWebUIFrameBinders() below.
+#include "chrome/browser/ui/webui/parra/parra.mojom.h"
+#include "chrome/browser/ui/webui/parra/parra_ui.h"
 #include "chrome/browser/ui/webui/password_manager/password_manager_ui.h"
 #include "chrome/browser/ui/webui/side_panel/reading_list/reading_list_ui.h"
 #include "chrome/browser/ui/webui/user_education_internals/user_education_internals_ui.h"
@@ -224,6 +228,17 @@ void PopulateChromeWebUIFrameBindersPartsAllPlatforms(
       omnibox_popup::mojom::PageHandlerFactory, OmniboxPopupUI>(map);
   RegisterWebUIControllerInterfaceBinder<
       indigo_internals::mojom::PageHandlerFactory, IndigoInternalsUI>(map);
+  // Parra: chrome://parra environment management page.
+  //
+  // REQUIRED, and its absence is fatal rather than degradatory: the renderer
+  // asks the browser for parra.mojom.PageHandlerFactory the moment parra_api.ts
+  // calls PageHandlerFactory.getRemote(). With no binder registered, the
+  // browser replies "No binder found for interface
+  // parra.mojom.PageHandlerFactory" and KILLS the renderer for the bad Mojo
+  // message, so the page never paints -- the tab is simply gone (BLANK), which
+  // is indistinguishable from a failed load.
+  RegisterWebUIControllerInterfaceBinder<parra::mojom::PageHandlerFactory,
+                                         ParraUI>(map);
   RegisterWebUIControllerInterfaceBinder<
       webnn_internals::mojom::PageHandlerFactory, WebNNInternalsUI>(map);
 #endif

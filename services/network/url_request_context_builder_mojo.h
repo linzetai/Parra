@@ -6,12 +6,16 @@
 #define SERVICES_NETWORK_URL_REQUEST_CONTEXT_BUILDER_MOJO_H_
 
 #include <memory>
+#include <stdint.h>
+#include <string>
 
 #include "base/component_export.h"
+#include "base/functional/callback_forward.h"
 #include "build/build_config.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "net/url_request/url_request_context_builder.h"
 #include "services/network/url_request_context_owner.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 #include "services/proxy_resolver/public/mojom/proxy_resolver.mojom.h"
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
@@ -32,6 +36,7 @@ class URLRequestContext;
 }  // namespace net
 
 namespace network {
+class HostOverrideProxyResolutionService;
 // Specialization of `URLRequestContextBuilder` that can create one or more
 // `ProxyResolutionService`s that use Mojo. This can be a
 // `ConfiguredProxyResolutionService` that uses a Mojo `ProxyResolver` or a
@@ -59,6 +64,15 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLRequestContextBuilderMojo
       mojo::PendingRemote<proxy_resolver::mojom::ProxyResolverFactory>
           mojo_proxy_resolver_factory);
 
+  void SetParraHostOverrideRules(
+      std::string rules,
+      mojom::HostOverridePolicy policy,
+      std::string policy_reason,
+      uint64_t revision,
+      uint64_t generation,
+      base::OnceCallback<void(HostOverrideProxyResolutionService*)>
+          on_wrapper_created);
+
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
   void SetMojoSystemProxyResolver(
       mojo::PendingRemote<proxy_resolver::mojom::SystemProxyResolver>
@@ -83,6 +97,9 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLRequestContextBuilderMojo
   std::unique_ptr<net::DhcpPacFileFetcher> CreateDhcpPacFileFetcher(
       net::URLRequestContext* context);
 
+  std::unique_ptr<net::ProxyResolutionService> MaybeWrapHostOverride(
+      std::unique_ptr<net::ProxyResolutionService> proxy_resolution_service);
+
 #if BUILDFLAG(IS_CHROMEOS)
   // If set, handles calls to get the PAC script URL from the browser process.
   // Only used if |mojo_proxy_resolver_factory_| is set.
@@ -91,6 +108,16 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLRequestContextBuilderMojo
 
   mojo::PendingRemote<proxy_resolver::mojom::ProxyResolverFactory>
       mojo_proxy_resolver_factory_;
+
+  bool parra_host_override_enabled_ = false;
+  std::string parra_host_override_rules_;
+  mojom::HostOverridePolicy parra_host_override_policy_ =
+      mojom::HostOverridePolicy::kUnknown;
+  std::string parra_host_override_policy_reason_;
+  uint64_t parra_host_mapping_revision_ = 0;
+  uint64_t parra_host_mapping_generation_ = 0;
+    base::OnceCallback<void(HostOverrideProxyResolutionService*)>
+            on_host_override_wrapper_created_;
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
   mojo::PendingRemote<proxy_resolver::mojom::SystemProxyResolver>

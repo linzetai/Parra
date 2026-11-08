@@ -1,0 +1,969 @@
+/* Copyright 2026 The Parra Authors
+ * Use of this source code is governed by a BSD-style license that can be
+ * found in the LICENSE file.
+ */
+
+/* #css_wrapper_metadata_start
+ * #type=style-lit
+ * #css_wrapper_metadata_end */
+
+/*
+ * VISUAL DIRECTION
+ *
+ * Light first, dark compatible. Restrained green as the single accent -- not a
+ * blue/purple gradient, which reads as "generic SaaS dashboard" and is what the
+ * review explicitly asked to avoid.
+ *
+ * The layout avoids the admin-console look by:
+ *   - one card per section rather than one dense table,
+ *   - generous line height and vertical rhythm (a settings page people read, not scan),
+ *   - borders instead of heavy fills for grouping, so nothing looks like a "panel of
+ *     controls" the way an ops tool does,
+ *   - selection state expressed by a left accent bar and a subtle wash, NOT by a large
+ *     saturated fill (the review called that out specifically).
+ *
+ * Every colour is a token so dark mode is one override block, not a second stylesheet.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --parra-bg: #fbfbfa;
+  --parra-surface: #fff;
+  --parra-surface-sunken: #f5f6f5;
+  --parra-border: #e4e6e4;
+  --parra-border-strong: #d3d6d3;
+
+  --parra-text: #1f2421;
+  --parra-text-secondary: #5f6663;
+  --parra-text-tertiary: #8b918e;
+
+  /* A restrained, slightly warm green. Used sparingly: the primary button, the
+   * selected row accent, and success. Never as a background wash. */
+  --parra-accent: #2f6b4f;
+  --parra-accent-hover: #275a43;
+  --parra-accent-soft: rgba(47, 107, 79, 0.08);
+  --parra-accent-border: rgba(47, 107, 79, 0.28);
+
+  --parra-danger: #a5352b;
+  --parra-danger-soft: rgba(165, 53, 43, 0.07);
+  --parra-danger-border: rgba(165, 53, 43, 0.26);
+
+  --parra-warning-soft: #fdf7e7;
+  --parra-warning-border: #e8dcb5;
+  --parra-warning-text: #7a5c14;
+
+  --parra-radius: 10px;
+  --parra-radius-sm: 6px;
+
+  --parra-shadow-card: 0 1px 2px rgba(31, 36, 33, 0.04);
+  --parra-shadow-pop: 0 4px 16px rgba(31, 36, 33, 0.10);
+
+  --parra-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+
+  --parra-sidebar-width: 268px;
+  --parra-content-max: 720px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --parra-bg: #161917;
+    --parra-surface: #1d211f;
+    --parra-surface-sunken: #222724;
+    --parra-border: #2e3431;
+    --parra-border-strong: #3c4340;
+
+    --parra-text: #e8ebe9;
+    --parra-text-secondary: #a8b0ac;
+    --parra-text-tertiary: #7b837f;
+
+    --parra-accent: #6fbf95;
+    --parra-accent-hover: #83cda5;
+    --parra-accent-soft: rgba(111, 191, 149, 0.12);
+    --parra-accent-border: rgba(111, 191, 149, 0.32);
+
+    --parra-danger: #e08b81;
+    --parra-danger-soft: rgba(224, 139, 129, 0.10);
+    --parra-danger-border: rgba(224, 139, 129, 0.30);
+
+    --parra-warning-soft: rgba(232, 220, 181, 0.10);
+    --parra-warning-border: rgba(232, 220, 181, 0.26);
+    --parra-warning-text: #ddc98a;
+
+    --parra-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30);
+    --parra-shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.45);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: system-ui, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--parra-text);
+  background: var(--parra-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ------------------------------------------------------------------ layout */
+
+parra-app {
+  display: block;
+  min-height: 100%;
+}
+
+.parra-shell {
+  display: flex;
+  min-height: 100vh;
+  /* Constrain the shell to the viewport. Without this the flex container grows to its
+   * content's intrinsic width, so a long detail pane pushed the "+ 新建环境" button out
+   * of view instead of wrapping the text inside it -- the page looked as if it had no
+   * create affordance at all. */
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+/* ----------------------------------------------------------------- sidebar */
+
+.parra-sidebar {
+  width: var(--parra-sidebar-width);
+  flex: 0 0 var(--parra-sidebar-width);
+  border-right: 1px solid var(--parra-border);
+  background: var(--parra-surface-sunken);
+  display: flex;
+  flex-direction: column;
+  /* Sticky rather than fixed: the page scrolls as a whole, and a fixed sidebar would
+   * need its own scrollbar which reads as an application chrome around a settings
+   * page. */
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.parra-sidebar-header {
+  /* Tighter than before: with the subtitle gone this is a single line, and 28px of top
+   * padding over a one-line heading read as an accidental gap. */
+  padding: 22px 22px 10px;
+}
+
+.parra-sidebar-title {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* "New environment" sits at the bottom of the list it adds to, pinned so it stays
+ * reachable when the list is long. */
+.parra-sidebar-footer {
+  padding: 10px 12px 16px;
+  border-top: 1px solid var(--parra-border);
+}
+
+.parra-env-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 12px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.parra-env-row {
+  /* Reset the button element completely: this is a list row, not a control with a
+   * chrome of its own. */
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--parra-radius-sm);
+  /* Selection is a left accent bar, so the row needs a slot for it that exists in
+   * both states -- otherwise selecting would shift the text by 2px. */
+  border-left: 2px solid transparent;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.parra-env-row:hover {
+  background: rgba(127, 127, 127, 0.07);
+}
+
+.parra-env-row:focus-visible {
+  outline: 2px solid var(--parra-accent-border);
+  outline-offset: 1px;
+}
+
+.parra-env-row[aria-selected='true'] {
+  /* Deliberately a wash plus an accent bar, NOT a filled block. A saturated fill makes
+   * the list feel like a navigation rail in an admin tool, and it fights with the
+   * colour dot that is the row's actual identity. */
+  background: var(--parra-surface);
+  border-left-color: var(--parra-accent);
+  box-shadow: var(--parra-shadow-card);
+}
+
+.parra-env-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--parra-text-tertiary);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.parra-env-dot--none {
+  /* "no colour set" is drawn as a hollow ring so it cannot be mistaken for a grey
+   * colour the user chose. */
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--parra-border-strong);
+}
+
+.parra-env-row-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.parra-env-name {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.parra-env-meta {
+  display: block;
+  font-size: 11.5px;
+  color: var(--parra-text-tertiary);
+  line-height: 1.45;
+}
+
+.parra-env-row[data-disabled='true'] .parra-env-name {
+  color: var(--parra-text-tertiary);
+}
+
+/* -------------------------------------------------------------------- main */
+
+.parra-main {
+  flex: 1;
+  /* min-width: 0 is what lets this flex child SHRINK below its content's intrinsic
+   * width. Flex items default to min-width: auto, which is why the card content was
+   * widening the page instead of wrapping. */
+  min-width: 0;
+  padding: 32px 40px 64px;
+}
+
+.parra-main-inner {
+  max-width: var(--parra-content-max);
+  margin: 0 auto;
+}
+
+.parra-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.parra-page-titles {
+  min-width: 0;
+}
+
+.parra-page-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  /* A long environment name must wrap instead of pushing the layout wide. */
+  overflow-wrap: anywhere;
+}
+
+/* The one-line state summary under the page title.
+ *
+ * This replaces both the old static "what is an environment" subtitle and the per-card
+ * warning banners: one row, always in the same place, answering "what am I looking at
+ * and is anything pending" without occupying a block of its own. */
+.parra-status-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--parra-text-secondary);
+}
+
+.parra-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.parra-status-text {
+  min-width: 0;
+}
+
+/* ------------------------------------------------------------------ cards */
+
+.parra-card {
+  background: var(--parra-surface);
+  border: 1px solid var(--parra-border);
+  border-radius: var(--parra-radius);
+  padding: 18px 20px;
+  margin-bottom: 14px;
+  box-shadow: var(--parra-shadow-card);
+}
+
+/* Read-only reference at the bottom of the page: no shadow and a tighter rhythm, so it
+ * does not compete with the two cards the user came here to edit. */
+.parra-card--compact {
+  box-shadow: none;
+  background: transparent;
+  padding: 4px 2px 18px;
+  border: 0;
+  border-top: 1px solid var(--parra-border);
+  border-radius: 0;
+  margin-top: 6px;
+}
+
+.parra-card--compact .parra-card-title {
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--parra-text-tertiary);
+  font-weight: 500;
+}
+
+.parra-route-select {
+  display: block;
+  width: min(100%, 360px);
+  min-height: 38px;
+  margin: 14px 0;
+  padding: 7px 10px;
+  border: 1px solid var(--parra-border, #c8d0ca);
+  border-radius: 8px;
+  color: inherit;
+  background: Canvas;
+  font: inherit;
+}
+
+.parra-route-select:focus-visible {
+  outline: 2px solid Highlight;
+}
+
+.parra-route-select[hidden] {
+  display: none;
+}
+
+/* Collapsed explanation inside a card.
+ *
+ * The summary is the always-visible sentence; the body is the detail for whoever needs
+ * it. Used by 危险操作 so the last card on the page is not the wordiest one. */
+.parra-details {
+  margin: 2px 0 14px;
+}
+
+.parra-details-summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--parra-text-secondary);
+  /* The default triangle is tiny and misaligned against 13px text. */
+  padding: 4px 0;
+}
+
+.parra-details-summary:hover {
+  color: var(--parra-text);
+}
+
+.parra-details-summary:focus-visible {
+  outline: 2px solid var(--parra-accent);
+  outline-offset: 2px;
+  border-radius: var(--parra-radius-sm);
+}
+
+.parra-details-body {
+  margin-top: 8px;
+  padding-left: 2px;
+}
+
+.parra-card-title {
+  margin: 0 0 4px;
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.parra-card-hint {
+  margin: 0 0 16px;
+  font-size: 12.5px;
+  color: var(--parra-text-tertiary);
+  line-height: 1.55;
+}
+
+.parra-card--danger {
+  border-color: var(--parra-danger-border);
+}
+
+.parra-card--danger .parra-card-title {
+  color: var(--parra-danger);
+}
+
+/* ------------------------------------------------------------------ forms */
+
+.parra-field {
+  margin-bottom: 16px;
+}
+
+.parra-field:last-child {
+  margin-bottom: 0;
+}
+
+.parra-label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--parra-text-secondary);
+  margin-bottom: 6px;
+}
+
+.parra-input,
+.parra-textarea,
+.parra-select {
+  width: 100%;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--parra-text);
+  background: var(--parra-surface);
+  border: 1px solid var(--parra-border-strong);
+  border-radius: var(--parra-radius-sm);
+  padding: 8px 10px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.parra-input:focus,
+.parra-textarea:focus,
+.parra-select:focus {
+  outline: none;
+  border-color: var(--parra-accent);
+  box-shadow: 0 0 0 3px var(--parra-accent-soft);
+}
+
+.parra-input:disabled,
+.parra-textarea:disabled,
+.parra-select:disabled {
+  background: var(--parra-surface-sunken);
+  color: var(--parra-text-tertiary);
+  cursor: not-allowed;
+}
+
+.parra-textarea {
+  min-height: 88px;
+  resize: vertical;
+  font-family: var(--parra-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.parra-input--invalid,
+.parra-textarea--invalid {
+  border-color: var(--parra-danger);
+}
+
+.parra-input--invalid:focus,
+.parra-textarea--invalid:focus {
+  box-shadow: 0 0 0 3px var(--parra-danger-soft);
+}
+
+.parra-field-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--parra-danger);
+}
+
+.parra-mapping-diagnostics {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.parra-mapping-diagnostic {
+  margin: 3px 0;
+}
+
+.parra-mapping-diagnostic--error {
+  color: var(--parra-danger);
+}
+
+.parra-mapping-diagnostic--warning {
+  color: var(--parra-text-secondary);
+}
+
+.parra-mapping-diagnostic--ok {
+  color: var(--parra-text-tertiary);
+}
+
+.parra-field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--parra-text-tertiary);
+  line-height: 1.55;
+}
+
+.parra-code {
+  font-family: var(--parra-mono);
+  font-size: 12px;
+  background: var(--parra-surface-sunken);
+  border: 1px solid var(--parra-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* ---------------------------------------------------------------- buttons */
+
+.parra-btn {
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--parra-radius-sm);
+  padding: 7px 14px;
+  cursor: pointer;
+  border: 1px solid var(--parra-border-strong);
+  background: var(--parra-surface);
+  color: var(--parra-text);
+  transition: background-color 120ms ease, border-color 120ms ease;
+  white-space: nowrap;
+}
+
+.parra-btn:hover:not(:disabled) {
+  background: var(--parra-surface-sunken);
+}
+
+.parra-btn:focus-visible {
+  outline: 2px solid var(--parra-accent-border);
+  outline-offset: 1px;
+}
+
+.parra-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.parra-btn--primary {
+  background: var(--parra-accent);
+  border-color: var(--parra-accent);
+  color: #fff;
+}
+
+/* Full-width variant, for the sidebar's 新建环境 button: it is the only control in its
+ * footer, so a narrow button floating in a wide column read as an afterthought. */
+.parra-btn--block {
+  display: block;
+  width: 100%;
+  text-align: center;
+}
+
+@media (prefers-color-scheme: dark) {
+  .parra-btn--primary {
+    color: #10221a;
+  }
+}
+
+.parra-btn--primary:hover:not(:disabled) {
+  background: var(--parra-accent-hover);
+  border-color: var(--parra-accent-hover);
+}
+
+.parra-btn--danger {
+  color: var(--parra-danger);
+  border-color: var(--parra-danger-border);
+  background: transparent;
+}
+
+.parra-btn--danger:hover:not(:disabled) {
+  background: var(--parra-danger-soft);
+}
+
+.parra-btn--quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--parra-text-secondary);
+}
+
+.parra-btn--quiet:hover:not(:disabled) {
+  background: var(--parra-surface-sunken);
+  color: var(--parra-text);
+}
+
+.parra-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.parra-actions--end {
+  justify-content: flex-end;
+}
+
+/* --------------------------------------------------------------- banners */
+
+.parra-banner {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 11px 14px;
+  border-radius: var(--parra-radius-sm);
+  font-size: 12.5px;
+  line-height: 1.6;
+  margin-bottom: 16px;
+  border: 1px solid transparent;
+}
+
+.parra-banner--info {
+  background: var(--parra-accent-soft);
+  border-color: var(--parra-accent-border);
+  color: var(--parra-text);
+}
+
+.parra-banner--warning {
+  background: var(--parra-warning-soft);
+  border-color: var(--parra-warning-border);
+  color: var(--parra-warning-text);
+}
+
+.parra-banner--error {
+  background: var(--parra-danger-soft);
+  border-color: var(--parra-danger-border);
+  color: var(--parra-danger);
+}
+
+.parra-banner--success {
+  background: var(--parra-accent-soft);
+  border-color: var(--parra-accent-border);
+  color: var(--parra-accent);
+}
+
+.parra-banner-title {
+  font-weight: 600;
+  margin: 0 0 2px;
+}
+
+.parra-banner-body {
+  margin: 0;
+}
+
+/* ------------------------------------------------------------ definition list */
+
+/* The read-only environment details.
+ *
+ * A plain two-column grid rather than <dl>/<dt>/<dd>: <dt> carries the ARIA `term`
+ * role, which ARIA forbids from having an accessible name, and Chromium asserts that
+ * rule on WebUI (see the comment in parra.ts). The grid here is what actually produced
+ * the layout, so nothing visual depends on the old elements. */
+.parra-deflist {
+  display: grid;
+  grid-template-columns: minmax(96px, max-content) 1fr;
+  gap: 10px 20px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.parra-deflist-term {
+  color: var(--parra-text-tertiary);
+  font-size: 12.5px;
+}
+
+.parra-deflist-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.parra-mono-value {
+  font-family: var(--parra-mono);
+  font-size: 12.5px;
+}
+
+/* ----------------------------------------------------------- colour picker */
+
+.parra-colour-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.parra-colour-swatch {
+  appearance: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  transition: transform 100ms ease;
+}
+
+.parra-colour-swatch:hover {
+  transform: scale(1.08);
+}
+
+.parra-colour-swatch:focus-visible {
+  outline: 2px solid var(--parra-accent-border);
+  outline-offset: 2px;
+}
+
+.parra-colour-swatch[aria-pressed='true']::after {
+  /* The ring is drawn OUTSIDE the swatch so the colour itself is never obscured --
+   * a user picking a colour needs to see the colour they picked. */
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid var(--parra-accent);
+}
+
+.parra-colour-swatch--none {
+  background: transparent;
+  border: 1.5px dashed var(--parra-border-strong);
+}
+
+.parra-colour-swatch--none[aria-pressed='true']::after {
+  border-style: solid;
+}
+
+/* ------------------------------------------------------------------- switch */
+
+.parra-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.parra-switch-text {
+  min-width: 0;
+}
+
+.parra-switch-label {
+  font-size: 13.5px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.parra-switch-hint {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--parra-text-tertiary);
+  line-height: 1.55;
+}
+
+/* ------------------------------------------------------------------- empty */
+
+.parra-empty {
+  padding: 56px 24px;
+  text-align: center;
+  color: var(--parra-text-tertiary);
+}
+
+.parra-empty-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--parra-text-secondary);
+}
+
+.parra-empty-body {
+  margin: 0 auto;
+  max-width: 40ch;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+/* ----------------------------------------------------------------- loading */
+
+.parra-loading {
+  padding: 64px 24px;
+  text-align: center;
+  color: var(--parra-text-tertiary);
+  font-size: 13px;
+}
+
+/* ------------------------------------------------------------------ dialog */
+
+.parra-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 24, 22, 0.38);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 20;
+}
+
+.parra-dialog {
+  background: var(--parra-surface);
+  border-radius: var(--parra-radius);
+  border: 1px solid var(--parra-border);
+  box-shadow: var(--parra-shadow-pop);
+  width: 100%;
+  max-width: 460px;
+  padding: 24px;
+}
+
+.parra-dialog-title {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.parra-dialog-body {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--parra-text-secondary);
+}
+
+.parra-dialog-body p {
+  margin: 0 0 10px;
+}
+
+.parra-dialog-body p:last-child {
+  margin-bottom: 0;
+}
+
+.parra-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+/* -------------------------------------------------------------------- boot */
+
+#boot-error {
+  max-width: 560px;
+  margin: 96px auto;
+  padding: 28px;
+  border: 1px solid var(--parra-danger-border);
+  border-radius: var(--parra-radius);
+  background: var(--parra-danger-soft);
+  color: var(--parra-text);
+}
+
+#boot-error h1 {
+  margin: 0 0 12px;
+  font-size: 17px;
+  color: var(--parra-danger);
+}
+
+#boot-error p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+#boot-error-detail {
+  font-family: var(--parra-mono);
+  font-size: 12px;
+  color: var(--parra-text-tertiary);
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------- narrow view */
+
+/* Two breakpoints, not one: the sidebar goes on top at 860px, but the cards also need
+ * their padding back before that, because at 1000px a 40px gutter plus 22px of card
+ * padding leaves too little for the textarea and the two-column detail grid. */
+@media (max-width: 1000px) {
+  .parra-main {
+    padding: 28px 24px 56px;
+  }
+
+  .parra-card {
+    padding: 16px 16px;
+  }
+}
+
+@media (max-width: 860px) {
+  .parra-shell {
+    flex-direction: column;
+  }
+
+  .parra-sidebar {
+    width: 100%;
+    flex: 0 0 auto;
+    height: auto;
+    position: static;
+    border-right: 0;
+    border-bottom: 1px solid var(--parra-border);
+  }
+
+  .parra-env-list {
+    max-height: 240px;
+  }
+
+  .parra-main {
+    padding: 24px 20px 48px;
+  }
+}
+
+/* Very narrow: the detail grid's 96px label column stops being worth its width, so the
+ * label and value stack instead. Without this the value column wrapped to a few
+ * characters per line at phone-ish widths. */
+@media (max-width: 560px) {
+  .parra-deflist {
+    grid-template-columns: 1fr;
+    gap: 2px 0;
+  }
+
+  .parra-deflist-term {
+    margin-top: 8px;
+  }
+
+  .parra-page-title {
+    font-size: 20px;
+  }
+
+  .parra-actions {
+    flex-wrap: wrap;
+  }
+}
+
+/* Screen-reader-only text: used for the tab count and state that also need a label,
+ * without adding visible clutter. */
+.parra-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

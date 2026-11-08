@@ -404,3 +404,29 @@ cr-searchbox-dropdown::part(dropdown-content) {
     outline-offset: 2px;
   }
 }
+
+@media (forced-colors: none) {
+  :host([parra-workspace]) {
+    --cr-searchbox-border: 1px solid var(--color-new-tab-page-most-visited-tile-background);
+    --cr-searchbox-border-radius: 13px;
+    --cr-searchbox-height: 58px;
+  }
+
+  :host([parra-workspace][searchbox-chrome-refresh-theming]:not([dropdown-is-visible])) {
+    --cr-searchbox-shadow: 0 3px 10px var(--color-searchbox-shadow);
+  }
+
+  :host([parra-workspace][is-dark]) {
+    --color-searchbox-background: #2b3035;
+    --color-searchbox-foreground: #f1f3f1;
+    --color-searchbox-placeholder: #bac4be;
+    --color-searchbox-lens-voice-icon-background: #d5ded8;
+    --cr-searchbox-border: 1px solid #4c555a;
+  }
+
+  :host([parra-workspace][is-dark]:not([use-webkit-search-icons_])) #voiceSearchButton,
+  :host([parra-workspace][is-dark]:not([use-webkit-search-icons_])) #lensSearchButton {
+    filter: brightness(0) invert(1);
+    opacity: .78;
+  }
+}

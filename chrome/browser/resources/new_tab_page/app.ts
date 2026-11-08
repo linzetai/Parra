@@ -224,6 +224,8 @@ export class AppElement extends AppElementBase {
       // Protected properties
       // =======================================================================
 
+      parraEnvironmentLabel_: {type: String},
+      parraEnvironmentColor_: {type: String},
       composeboxState_: {type: Object},
       oneGoogleBarIframePath_: {type: String},
       oneGoogleBarLoaded_: {type: Boolean},
@@ -391,6 +393,8 @@ export class AppElement extends AppElementBase {
   accessor composeboxEnabled: boolean =
       loadTimeData.getBoolean('searchboxShowComposebox');
 
+  protected accessor parraEnvironmentLabel_: string = '';
+  protected accessor parraEnvironmentColor_: string = '';
   protected accessor composeboxState_: ComposeboxState|null = null;
   protected accessor oneGoogleBarIframePath_: string|undefined;
   protected accessor oneGoogleBarLoaded_: boolean = false;
@@ -600,6 +604,11 @@ export class AppElement extends AppElementBase {
 
   override connectedCallback() {
     super.connectedCallback();
+    NewTabPageProxy.getInstance().handler.getParraEnvironmentIdentity().then(
+        identity => {
+          this.parraEnvironmentLabel_ = identity.label || '';
+          this.parraEnvironmentColor_ = identity.color || '';
+        });
     if (!this.enableThreadsRail_) {
       realboxCanShowSecondarySideMediaQueryList.addEventListener(
           'change', this.onRealboxCanShowSecondarySideChanged_);
@@ -717,6 +726,47 @@ export class AppElement extends AppElementBase {
     }
 
     this.initializeContextMenuAnimationState_();
+  }
+
+  protected getParraVisibleAccent_(): string {
+    const raw = this.parraEnvironmentColor_;
+    if (!/^#[0-9a-f]{6}$/i.test(raw)) {
+      return '#6b8074';
+    }
+    const channels = [1, 3, 5].map(i => parseInt(raw.slice(i, i + 2), 16));
+    const dark = !!this.theme_?.isDark;
+    const background = dark ? [51, 53, 56] : [255, 255, 255];
+    const luminance = (rgb: number[]) => {
+      const linear = rgb.map(value => {
+        const unit = value / 255;
+        return unit <= .04045 ? unit / 12.92 : ((unit + .055) / 1.055) ** 2.4;
+      });
+      return .2126 * linear[0]! + .7152 * linear[1]! + .0722 * linear[2]!;
+    };
+    const baseLuminance = luminance(background);
+    const contrast = (rgb: number[]) => {
+      const value = luminance(rgb);
+      return (Math.max(value, baseLuminance) + .05) /
+          (Math.min(value, baseLuminance) + .05);
+    };
+    if (contrast(channels) >= 3) {
+      return raw;
+    }
+    const endpoint = dark ? 255 : 0;
+    const mix = (amount: number) =>
+        channels.map(value => Math.round(value + (endpoint - value) * amount));
+    let low = 0;
+    let high = 1;
+    for (let i = 0; i < 16; i++) {
+      const middle = (low + high) / 2;
+      if (contrast(mix(middle)) >= 3) {
+        high = middle;
+      } else {
+        low = middle;
+      }
+    }
+    return `#${
+        mix(high).map(value => value.toString(16).padStart(2, '0')).join('')}`;
   }
 
   override disconnectedCallback() {
@@ -1353,8 +1403,8 @@ export class AppElement extends AppElementBase {
 
   protected onVoiceSearchRecordingStopped_(e: CustomEvent<string>) {
     const query = e.detail;
-    const dialog = this.shadowRoot.querySelector<HTMLDialogElement>(
-        '#voiceSearchDialog');
+    const dialog =
+        this.shadowRoot.querySelector<HTMLDialogElement>('#voiceSearchDialog');
     if (dialog) {
       dialog.close();
     }
@@ -1440,8 +1490,7 @@ export class AppElement extends AppElementBase {
   }
 
   private onModulesLoadedChange_() {
-    if (this.modulesLoaded_ &&
-        loadTimeData.getBoolean('modulesEnabled')) {
+    if (this.modulesLoaded_ && loadTimeData.getBoolean('modulesEnabled')) {
       recordLoadDuration(
           'NewTabPage.Modules.ShownTime', WindowProxy.getInstance().now());
     }

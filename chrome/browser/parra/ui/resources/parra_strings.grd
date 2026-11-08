@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Strings for the Parra environment switcher (M1).
+
+     Why a separate grd instead of adding to chrome/app/generated_resources.grd:
+     adding a message there forces grit to regenerate a header that essentially
+     the whole browser includes, which turns a one line string change into a full
+     rebuild. A feature local grit_strings target regenerates one small header and
+     one small pak per locale. Same pattern as chrome/browser/indigo/resources.
+
+     The pak must also be listed in chrome/chrome_repack_locales.gni, otherwise it
+     is built but never loaded, and every IDS_ defined here resolves to an empty
+     string at runtime. -->
+<grit base_dir="." latest_public_release="0" current_release="1"
+      source_lang_id="en" enc_check="möl">
+  <outputs>
+    <output filename="grit/parra_strings.h" type="rc_header">
+      <emit emit_type='prepend'></emit>
+    </output>
+    <output filename="parra_strings_af.pak" type="data_package" lang="af" />
+    <output filename="parra_strings_am.pak" type="data_package" lang="am" />
+    <output filename="parra_strings_ar.pak" type="data_package" lang="ar" />
+    <output filename="parra_strings_as.pak" type="data_package" lang="as" />
+    <output filename="parra_strings_az.pak" type="data_package" lang="az" />
+    <output filename="parra_strings_be.pak" type="data_package" lang="be" />
+    <output filename="parra_strings_bg.pak" type="data_package" lang="bg" />
+    <output filename="parra_strings_bn.pak" type="data_package" lang="bn" />
+    <output filename="parra_strings_bs.pak" type="data_package" lang="bs" />
+    <output filename="parra_strings_ca.pak" type="data_package" lang="ca" />
+    <output filename="parra_strings_cs.pak" type="data_package" lang="cs" />
+    <output filename="parra_strings_cy.pak" type="data_package" lang="cy" />
+    <output filename="parra_strings_da.pak" type="data_package" lang="da" />
+    <output filename="parra_strings_de.pak" type="data_package" lang="de" />
+    <output filename="parra_strings_el.pak" type="data_package" lang="el" />
+    <output filename="parra_strings_en-GB.pak" type="data_package" lang="en-GB" />
+    <output filename="parra_strings_en-US.pak" type="data_package" lang="en" />
+    <output filename="parra_strings_es.pak" type="data_package" lang="es" />
+    <output filename="parra_strings_es-419.pak" type="data_package" lang="es-419" />
+    <output filename="parra_strings_et.pak" type="data_package" lang="et" />
+    <output filename="parra_strings_eu.pak" type="data_package" lang="eu" />
+    <output filename="parra_strings_fa.pak" type="data_package" lang="fa" />
+    <output filename="parra_strings_fi.pak" type="data_package" lang="fi" />
+    <output filename="parra_strings_fil.pak" type="data_package" lang="fil" />
+    <output filename="parra_strings_fr.pak" type="data_package" lang="fr" />
+    <output filename="parra_strings_fr-CA.pak" type="data_package" lang="fr-CA" />
+    <output filename="parra_strings_gl.pak" type="data_package" lang="gl" />
+    <output filename="parra_strings_gu.pak" type="data_package" lang="gu" />
+    <output filename="parra_strings_he.pak" type="data_package" lang="he" />
+    <output filename="parra_strings_hi.pak" type="data_package" lang="hi" />
+    <output filename="parra_strings_hr.pak" type="data_package" lang="hr" />
+    <output filename="parra_strings_hu.pak" type="data_package" lang="hu" />
+    <output filename="parra_strings_hy.pak" type="data_package" lang="hy" />
+    <output filename="parra_strings_id.pak" type="data_package" lang="id" />
+    <output filename="parra_strings_is.pak" type="data_package" lang="is" />
+    <output filename="parra_strings_it.pak" type="data_package" lang="it" />
+    <output filename="parra_strings_ja.pak" type="data_package" lang="ja" />
+    <output filename="parra_strings_ka.pak" type="data_package" lang="ka" />
+    <output filename="parra_strings_kk.pak" type="data_package" lang="kk" />
+    <output filename="parra_strings_km.pak" type="data_package" lang="km" />
+    <output filename="parra_strings_kn.pak" type="data_package" lang="kn" />
+    <output filename="parra_strings_ko.pak" type="data_package" lang="ko" />
+    <output filename="parra_strings_ky.pak" type="data_package" lang="ky" />
+    <output filename="parra_strings_lo.pak" type="data_package" lang="lo" />
+    <output filename="parra_strings_lt.pak" type="data_package" lang="lt" />
+    <output filename="parra_strings_lv.pak" type="data_package" lang="lv" />
+    <output filename="parra_strings_mk.pak" type="data_package" lang="mk" />
+    <output filename="parra_strings_ml.pak" type="data_package" lang="ml" />
+    <output filename="parra_strings_mn.pak" type="data_package" lang="mn" />
+    <output filename="parra_strings_mr.pak" type="data_package" lang="mr" />
+    <output filename="parra_strings_ms.pak" type="data_package" lang="ms" />
+    <output filename="parra_strings_my.pak" type="data_package" lang="my" />
+    <output filename="parra_strings_nb.pak" type="data_package" lang="nb" />
+    <output filename="parra_strings_ne.pak" type="data_package" lang="ne" />
+    <output filename="parra_strings_nl.pak" type="data_package" lang="nl" />
+    <output filename="parra_strings_or.pak" type="data_package" lang="or" />
+    <output filename="parra_strings_pa.pak" type="data_package" lang="pa" />
+    <output filename="parra_strings_pl.pak" type="data_package" lang="pl" />
+    <output filename="parra_strings_pt-BR.pak" type="data_package" lang="pt-BR" />
+    <output filename="parra_strings_pt-PT.pak" type="data_package" lang="pt-PT" />
+    <output filename="parra_strings_ro.pak" type="data_package" lang="ro" />
+    <output filename="parra_strings_ru.pak" type="data_package" lang="ru" />
+    <output filename="parra_strings_si.pak" type="data_package" lang="si" />
+    <output filename="parra_strings_sk.pak" type="data_package" lang="sk" />
+    <output filename="parra_strings_sl.pak" type="data_package" lang="sl" />
+    <output filename="parra_strings_sq.pak" type="data_package" lang="sq" />
+    <output filename="parra_strings_sr.pak" type="data_package" lang="sr" />
+    <output filename="parra_strings_sr-Latn.pak" type="data_package" lang="sr-Latn" />
+    <output filename="parra_strings_sv.pak" type="data_package" lang="sv" />
+    <output filename="parra_strings_sw.pak" type="data_package" lang="sw" />
+    <output filename="parra_strings_ta.pak" type="data_package" lang="ta" />
+    <output filename="parra_strings_te.pak" type="data_package" lang="te" />
+    <output filename="parra_strings_th.pak" type="data_package" lang="th" />
+    <output filename="parra_strings_tr.pak" type="data_package" lang="tr" />
+    <output filename="parra_strings_uk.pak" type="data_package" lang="uk" />
+    <output filename="parra_strings_ur.pak" type="data_package" lang="ur" />
+    <output filename="parra_strings_uz.pak" type="data_package" lang="uz" />
+    <output filename="parra_strings_vi.pak" type="data_package" lang="vi" />
+    <output filename="parra_strings_zh-CN.pak" type="data_package" lang="zh-CN" />
+    <output filename="parra_strings_zh-HK.pak" type="data_package" lang="zh-HK" />
+    <output filename="parra_strings_zh-TW.pak" type="data_package" lang="zh-TW" />
+    <output filename="parra_strings_zu.pak" type="data_package" lang="zu" />
+    <output filename="parra_strings_ar-XB.pak" type="data_package" lang="ar-XB" />
+    <output filename="parra_strings_en-XA.pak" type="data_package" lang="en-XA" />
+  </outputs>
+  <translations>
+    <file path="parra_strings_zh-CN.xtb" lang="zh-CN" />
+  </translations>
+  <release seq="1">
+    <messages fallback_to_english="true">
+      <!-- Toolbar switcher button. -->
+      <message name="IDS_PARRA_ENVIRONMENT_PERSONAL_NAME" desc="Localized display name of the reserved default browsing environment.">
+        Personal
+      </message>
+      <message name="IDS_PARRA_SESSION_CRASHED_MESSAGE" desc="Crash recovery message for the Parra browser window.">
+        Parra wasn't shut down correctly.
+      </message>
+      <message name="IDS_PARRA_ENVIRONMENT_SWITCHER_BUTTON" desc="Tooltip and accessible name of the toolbar button that shows the current environment and opens the environment switcher menu. Environment is a Parra concept: an isolated browsing context with its own cookies, storage and host mappings.">
+        Switch environment
+      </message>
+      <message name="IDS_PARRA_ENVIRONMENT_SWITCHER_TOOLTIP" desc="Tooltip for the toolbar environment switcher button. The placeholder is the name of the environment currently shown in this window.">
+        Current environment: <ph name="ENVIRONMENT">$1<ex>Personal</ex></ph>
+      </message>
+      <message name="IDS_PARRA_ENVIRONMENT_SWITCHED" desc="Short status feedback after switching the visible environment in this window.">
+        Switched to <ph name="ENVIRONMENT">$1<ex>Work</ex></ph>
+      </message>
+
+      <!-- Menu. -->
+      <message name="IDS_PARRA_ENVIRONMENT_MENU_TITLE" desc="Title shown at the top of the environment switcher menu.">
+        Switch environment · current window
+      </message>
+      <message name="IDS_PARRA_ENVIRONMENT_MENU_MANAGE" desc="Menu item that opens the environment management page.">
+        Manage environments…
+      </message>
+      <message name="IDS_PARRA_ENVIRONMENT_MENU_TAB_COUNT" desc="Number of tabs of this environment in the current window, shown next to the environment name in the switcher menu. The placeholder is a number.">
+        {COUNT, plural,
+          =0 {No tabs}
+          =1 {1 tab}
+          other {# tabs}}
+      </message>
+      <message name="IDS_PARRA_ENVIRONMENT_MENU_DISABLED" desc="Suffix shown after the name of an environment that is disabled and cannot be switched to.">
+        (disabled)
+      </message>
+
+      <!-- Errors. -->
+      <message name="IDS_PARRA_ENVIRONMENT_SWITCH_FAILED" desc="Shown when switching to an environment failed, for example because it was deleted in the meantime. The previous environment stays active.">
+        Switching failed. The current environment was not changed.
+      </message>
+      <message name="IDS_PARRA_ENVIRONMENT_SWITCH_FAILED_DISABLED" desc="Shown when the user tried to switch to a disabled environment.">
+        This environment is disabled. Enable it before switching.
+      </message>
+
+      <!-- Parra new-tab-page workspace. -->
+      <message name="IDS_PARRA_NTP_ARIA_LABEL" desc="Accessible label for the Parra new-tab-page workspace.">
+        Parra new tab page
+      </message>
+      <message name="IDS_PARRA_NTP_LOGO_ALT" desc="Alternative text for the Parra mark on the new-tab page.">
+        Parra logo
+      </message>
+      <message name="IDS_PARRA_NTP_SUBTITLE" desc="Short tagline beneath the Parra mark on the new-tab page.">
+        Switch easily. Focus on the space you're in.
+      </message>
+      <message name="IDS_PARRA_NTP_CURRENT_SPACE" desc="Label for the active browsing environment on the new-tab page.">
+        Current browsing space
+      </message>
+      <message name="IDS_PARRA_NTP_TOP_SITES" desc="Heading above frequently visited sites on the Parra new-tab page.">
+        Your sites
+      </message>
+      <message name="IDS_PARRA_NTP_TOP_SITES_HINT" desc="Supporting text above frequently visited sites on the Parra new-tab page.">
+        Continue browsing in this environment
+      </message>
+    </messages>
+  </release>
+</grit>

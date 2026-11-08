@@ -19,6 +19,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/lifetime/browser_shutdown.h"
 #include "chrome/browser/metrics/metrics_reporting_state.h"
+#include "chrome/browser/parra/ui/resources/grit/parra_strings.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/exit_type_service.h"
@@ -301,7 +302,13 @@ views::BubbleDialogDelegate* SessionCrashedBubbleView::ShowBubble(
       .SetDialogDestroyingCallback(
           base::BindOnce(&SessionCrashedBubbleDelegate::OnWindowClosing,
                          base::Unretained(bubble_delegate)))
-      .AddParagraph(ui::DialogModelLabel(IDS_SESSION_CRASHED_VIEW_MESSAGE));
+      .AddParagraph(ui::DialogModelLabel(
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+          IDS_SESSION_CRASHED_VIEW_MESSAGE
+#else
+          IDS_PARRA_SESSION_CRASHED_MESSAGE
+#endif
+          ));
 
   if (offer_uma_optin) {
     RecordBubbleHistogramValue(SESSION_CRASHED_BUBBLE_OPTIN_BAR_SHOWN);

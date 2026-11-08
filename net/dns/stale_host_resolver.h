@@ -111,6 +111,11 @@ class StaleHostResolver : public HostResolver {
   HostCache* GetHostCache() override;
   base::DictValue GetDnsConfigAsValue() const override;
   void SetRequestContext(URLRequestContext* request_context) override;
+  // Must forward: this wrapper sits OUTSIDE MappedHostResolver, so swallowing
+  // the call would make a rule update look applied while having no effect --
+  // precisely the "request accepted != actually in effect" confusion the PoC
+  // must rule out.
+  bool SetHostMappingRules(std::string_view rules) override;
   bool IsHappyEyeballsV3Enabled() const override;
   std::unique_ptr<HostResolver::ProbeRequest> CreateDohProbeRequest() override;
 

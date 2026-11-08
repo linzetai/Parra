@@ -352,6 +352,22 @@ struct SocketBrokerRemotes {
 };
 
 // Parameters for constructing a network context.
+// Browser-computed permission for a Parra Environment's host override. The
+// Network Service must fail closed when policy provenance is unknown.
+enum HostOverridePolicy {
+    kAllowed,
+    kBlockedByPolicy,
+    kMandatoryProxy,
+    kUnknown,
+};
+
+// Per-NetworkContext policy updates. This is intentionally separate from the
+// ordinary ProxyConfig stream: host override is a routing decision scoped to
+// one StoragePartition, not a rewrite of the user's proxy configuration.
+interface HostOverridePolicyClient {
+    UpdateHostOverridePolicy(HostOverridePolicy policy, string reason);
+};
+
 struct NetworkContextParams {
   // The user agent string.
   string user_agent;
@@ -439,6 +455,17 @@ struct NetworkContextParams {
   // An empty string means "no remapping"; the global switch is then honored as
   // before. Embedders must not use this to globally override routing.
   string? host_mapping_rules;
+
+    // Parra's resolver-equivalent host rules for proxy selection. Kept separate
+    // from `host_mapping_rules` so command-line/global mappings never acquire
+    // Environment override priority.
+    bool parra_host_override_enabled = false;
+    string parra_host_override_rules;
+    uint64 host_mapping_revision = 0;
+    HostOverridePolicy host_override_policy = kUnknown;
+    string host_override_policy_reason;
+    pending_receiver<HostOverridePolicyClient>?
+            host_override_policy_client_receiver;
 
   // Enabled protocols. Note that these apply to all fetches, including those
   // used to fetch PAC scripts. Note that currently data URLs are always enabled
@@ -1285,6 +1312,33 @@ interface NetworkContext {
   // matching the filter. Filtering by origins is not supported. If |filter| is
   // non-null, |filter.origins| must be empty.
   ClearHostCache(ClearDataFilter? filter) => ();
+
+  // Parra P3.4: replace this NetworkContext's host mapping rules at runtime.
+  //
+  // WHY A NEW METHOD: the only existing way to set host_mapping_rules is
+  // NetworkContextParams, i.e. creation time (see the field near line 441). The
+  // product needs to apply an edited environment's mappings without tearing down
+  // the StoragePartition, so a live update path is required.
+  //
+  // SEMANTICS (deliberately narrow):
+  //  * Affects only lookups started after this call. Requests already in flight and
+  //    already-open sockets are untouched; nothing is blocked or cancelled.
+  //  * An empty |rules| string means "no mapping" and is a valid update.
+    //  * Parra NetworkContexts install the mapping layer even when initially
+    //    empty, so adding the first mapping is supported without rebuilding the
+    //    context.
+  //  * |error| carries a diagnosable reason whenever |applied| is false.
+  //
+  // The DNS cache and pooled connections are NOT cleared here; a caller that wants
+  // the change to take effect for already-cached names must also call
+  // ClearHostCache() and CloseIdleConnections().
+    // `revision` is monotonic per Environment. A stale revision is rejected.
+    // The reply identifies the exact applied revision and the NetworkContext
+    // generation so callers can distinguish current application from stale work.
+    SetHostMappingRules(string rules, uint64 revision)
+            => (bool applied, string error, uint64 applied_revision,
+              uint64 network_context_generation, HostOverridePolicy policy,
+              string policy_reason);
 
   // Clears all entries from the HTTP Auth cache that were between |start_time|
   // and |end_time|, with |start_time| being inclusive and |end_time| exclusive.

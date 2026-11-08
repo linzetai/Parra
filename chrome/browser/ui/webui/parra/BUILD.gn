@@ -1,0 +1,51 @@
+# Copyright 2026 The Parra Authors
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//mojo/public/tools/bindings/mojom.gni")
+
+assert(!is_android)
+
+# The Mojo interface between chrome://parra and the browser process.
+#
+# `webui_module_path = "/"` is what makes the generated TypeScript import path match
+# the page's runtime import (see the build_webui rule in
+# chrome/browser/resources/parra/BUILD.gn). Omitting it produces a module that loads
+# but whose imports resolve to a different instance, which fails at runtime with a
+# confusing "is not a constructor" rather than a build error.
+mojom("mojo_bindings") {
+  sources = [ "parra.mojom" ]
+  webui_module_path = "/"
+}
+
+source_set("parra_webui") {
+  public = [ "parra_ui.h" ]
+
+  sources = [
+    "parra_page_handler.cc",
+    "parra_page_handler.h",
+    "parra_ui.cc",
+  ]
+
+  public_deps = [ ":mojo_bindings" ]
+
+  deps = [
+    "//base",
+    "//chrome/app/theme:chrome_unscaled_resources",
+    # The store, its enums and its validation are the single source of truth for
+    # every rule the page applies; this target adds no rules of its own.
+    "//chrome/browser/parra:parra",
+    "//chrome/browser/parra:parra_tabs",
+    "//chrome/browser/profiles:profile",
+    # CountTabsInEnvironment() walks every window of this profile, because the delete
+    # precondition is global rather than per-window.
+    "//chrome/browser/ui/browser_window",
+    "//chrome/browser/ui/tabs:tab_strip",
+    "//chrome/browser/resources/parra:resources",
+    "//chrome/common",
+    "//components/tabs:public",
+    "//content/public/browser",
+    "//mojo/public/cpp/bindings",
+    "//ui/webui",
+  ]
+}

@@ -9,12 +9,13 @@
 #include <vector>
 
 #include "chrome/browser/parra/environment.h"
+#include "chrome/browser/parra/host_mapping_compiler.h"
 
 namespace parra {
 
 // Current on-disk schema. Bump when a change is not backward compatible; see
 // docs/parra/50 §8.1 for the rules that decide whether a bump is required.
-inline constexpr int kEnvironmentSchemaVersion = 1;
+inline constexpr int kEnvironmentSchemaVersion = 2;
 
 // How a stored blob was interpreted.
 enum class ParseStatus {
@@ -97,6 +98,11 @@ bool IsValidEnvironmentId(std::string_view id);
 //
 // `error` receives the offending rule text when validation fails.
 bool ValidateHostMappings(std::string_view host_mappings, std::string* error);
+
+// Validates a source string in its explicitly selected grammar.
+bool ValidateHostMappings(HostMappingFormat format,
+                          std::string_view host_mappings,
+                          std::string* error);
 
 // The reserved environment that maps to the default StoragePartition. Declared in
 // environment_tag.h; re-exported here so callers that only include this header do

@@ -117,6 +117,8 @@
 #include "chrome/browser/ui/webui/iwa_dev/iwa_dev_ui.h"
 #include "chrome/browser/ui/webui/media_router/media_router_internals_ui.h"
 #include "chrome/browser/ui/webui/multistep_filter_internals/multistep_filter_internals_ui.h"
+// Parra: chrome://parra environment management page.
+#include "chrome/browser/ui/webui/parra/parra_ui.h"
 #if BUILDFLAG(ENABLE_WEBUI_NTP)
 #include "chrome/browser/ui/webui/new_tab_footer/new_tab_footer_ui.h"
 #include "chrome/browser/ui/webui/ntp/new_tab_ui.h"
@@ -424,6 +426,11 @@ void RegisterChromeWebUIConfigs() {
   map.AddWebUIConfig(std::make_unique<WebuiGalleryUIConfig>());
   map.AddWebUIConfig(std::make_unique<WebUIJsErrorUIConfig>());
   map.AddWebUIConfig(std::make_unique<WebUIToolbarConfig>());
+  // Parra: chrome://parra -- environment management. Registered unconditionally
+  // here and gated by ParraUIConfig::IsWebUIEnabled() on "is this a regular
+  // profile", which is the same shape every other config in this list uses: the
+  // map decides reachability, the config decides availability.
+  map.AddWebUIConfig(std::make_unique<ParraUIConfig>());
 #endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(ENABLE_WEBUI_TABSTRIP_NTB)

@@ -25,6 +25,7 @@
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/headless/headless_command_processor.h"
 #include "chrome/browser/lifetime/application_lifetime_desktop.h"
+#include "chrome/browser/parra/ui/external_link_router.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
@@ -542,6 +543,26 @@ void StartupBrowserCreatorImpl::DetermineURLsAndLaunch(
       StartupTabProviderImpl(), process_startup, is_incognito_or_guest,
       is_post_crash_launch, promotions_enabled, whats_new_enabled);
   StartupTabs tabs = std::move(result.tabs);
+  const size_t external_count =
+      std::erase_if(tabs, [this](const StartupTab& tab) {
+        if (!tab.is_parra_external_link) {
+          return false;
+        }
+        parra::QueueExternalLink(profile_, tab.url);
+        return true;
+      });
+
+  // A forwarded URL must not create a throwaway NTP in an existing window.
+  // The queue will open the chosen URL only after an explicit decision.
+  if (external_count && tabs.empty() &&
+      process_startup == chrome::startup::IsProcessStartup::kNo) {
+    for (BrowserWindowInterface* window : GetAllBrowserWindowInterfaces()) {
+      if (window && window->GetProfile() == profile_ &&
+          window->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL) {
+        return;
+      }
+    }
+  }
 
   // Return immediately if we start an async restore, since the remainder of
   // that process is self-contained.

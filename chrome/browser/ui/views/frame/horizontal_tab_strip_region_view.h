@@ -20,16 +20,20 @@
 #include "ui/views/accessible_pane_view.h"
 
 class BrowserView;
+namespace parra {
+class EnvironmentSwitcherButton;
+class WindowEnvironmentState;
+}  // namespace parra
 
 namespace views {
 class ActionViewController;
 class Button;
-}
+class ScrollView;
+}  // namespace views
 class NewTabButton;
 class TabStripActionContainer;
 class TabStripComboButton;
 class TabStrip;
-class TabStripScrollContainer;
 
 // Container for the tabstrip and the other views sharing space with it -
 // with the exception of the caption buttons.
@@ -121,13 +125,16 @@ class HorizontalTabStripRegionViewOld : public TabStripRegionView {
   void AdjustViewBoundsRect(View* view, int offset);
 
   bool tab_strip_set_ = false;
+  int last_visible_active_tab_index_ = -1;
 
   raw_ptr<BrowserView> browser_view_ = nullptr;
+  raw_ptr<parra::EnvironmentSwitcherButton> parra_environment_switcher_ =
+      nullptr;
   raw_ptr<TabStripActionContainer> tab_strip_action_container_ = nullptr;
   raw_ptr<views::View> tab_strip_container_ = nullptr;
   raw_ptr<views::View> reserved_grab_handle_space_ = nullptr;
   raw_ptr<TabStrip> tab_strip_ = nullptr;
-  raw_ptr<TabStripScrollContainer> tab_strip_scroll_container_ = nullptr;
+  raw_ptr<views::ScrollView> tab_strip_scroll_container_ = nullptr;
   raw_ptr<TabStripComboButton> combo_button_ = nullptr;
   raw_ptr<views::Button> new_tab_button_ = nullptr;
 
@@ -178,10 +185,13 @@ class HorizontalTabStripRegionViewNew : public BaseTabStripRegionView {
   void AdjustViewBoundsRect(View* view, int offset);
 
   raw_ptr<TabStripActionContainer> tab_strip_action_container_ = nullptr;
+  raw_ptr<parra::EnvironmentSwitcherButton> parra_environment_switcher_ =
+      nullptr;
   raw_ptr<views::View> reserved_grab_handle_space_ = nullptr;
   raw_ptr<TabStripComboButton> combo_button_ = nullptr;
   raw_ptr<views::Button> new_tab_button_ = nullptr;
 
+  std::unique_ptr<parra::WindowEnvironmentState> parra_window_state_;
   std::unique_ptr<views::ActionViewController> action_view_controller_;
 
   base::CallbackListSubscription subscription_;

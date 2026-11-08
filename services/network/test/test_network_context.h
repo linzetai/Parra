@@ -175,6 +175,9 @@ class TestNetworkContext : public mojom::NetworkContext {
       std::vector<mojom::MatchedNetworkConditionsPtr>) override {}
   void SetAcceptLanguage(const std::string& new_accept_language) override {}
   void SetEnableReferrers(bool enable_referrers) override {}
+    void SetHostMappingRules(const std::string& rules,
+                                                     uint64_t revision,
+                                                     SetHostMappingRulesCallback callback) override;
 #if BUILDFLAG(IS_CT_SUPPORTED)
   void SetCTPolicy(mojom::CTPolicyPtr ct_policy) override {}
   void SetSCTAuditingMode(mojom::SCTAuditingMode mode) override {}

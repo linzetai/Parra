@@ -259,6 +259,7 @@ source_set("impl") {
     "//chrome/browser/performance_manager/public/user_tuning",
     "//chrome/browser/prefs",
     "//chrome/browser/preloading",
+    "//chrome/browser/parra/ui",
     "//chrome/browser/profiles",
     "//chrome/browser/profiles:profile",
     "//chrome/browser/profiles:profile_manager",

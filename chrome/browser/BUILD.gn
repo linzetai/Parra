@@ -1510,6 +1510,10 @@ source_set("core") {
       "//chrome/browser/ui/webui/image",
       "//chrome/browser/ui/webui/indigo_internals",
       "//chrome/browser/ui/webui/indigo_internals:mojo_bindings",
+      # Parra: chrome://parra's PageHandlerFactory binder is registered in
+      # chrome_browser_interface_binders_webui.cc, so the type must be linkable here.
+      "//chrome/browser/ui/webui/parra:parra_webui",
+      "//chrome/browser/ui/webui/parra:mojo_bindings",
       "//chrome/browser/ui/webui/new_tab_page",
       "//chrome/browser/ui/webui/password_manager:password_manager_ui",
       "//chrome/browser/ui/webui/signin/cross_device_signin_qr_bubble:mojo_bindings",

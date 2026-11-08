@@ -53,8 +53,7 @@
 #include "chrome/browser/metrics/expired_histograms_array.h"
 #include "chrome/browser/metrics/shutdown_watcher_helper.h"
 #include "chrome/browser/net/system_network_context_manager.h"
-#include "chrome/browser/performance_manager/public/chrome_browser_main_extra_parts_performance_manager.h"
-#include "chrome/browser/performance_monitor/chrome_browser_main_extra_parts_performance_monitor.h"
+#include "chrome/browser/parra/parra_host_mapping_poc.h"
 #include "chrome/browser/parra/parra_index_mapper_selftest.h"
 #include "chrome/browser/parra/parra_lifecycle_poc.h"
 #include "chrome/browser/parra/parra_p31_selftest.h"
@@ -62,6 +61,8 @@
 #include "chrome/browser/parra/parra_startup.h"
 #include "chrome/browser/parra/parra_tab_ops_selftest.h"
 #include "chrome/browser/parra/parra_visibility_poc.h"
+#include "chrome/browser/performance_manager/public/chrome_browser_main_extra_parts_performance_manager.h"
+#include "chrome/browser/performance_monitor/chrome_browser_main_extra_parts_performance_monitor.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.h"
 #include "chrome/browser/profiles/profile.h"
@@ -1006,8 +1007,6 @@ void ChromeBrowserMainParts::RecordBrowserStartupTime() {
 // -----------------------------------------------------------------------------
 // TODO(viettrungluu): move more/rest of BrowserMain() into BrowserMainParts.
 
-
-
 // content::BrowserMainParts implementation ------------------------------------
 
 int ChromeBrowserMainParts::PreEarlyInitialization() {
@@ -1762,44 +1761,58 @@ void ChromeBrowserMainParts::PostBrowserStart() {
   parra::MaybeRunIndexMapperSelfTest();
 
   // Parra Phase 2.2B-2.1: close-command containment and creation-invariant
-  // checks. No-op unless --parra-poc-tabops-selftest was supplied. Scheduled on a
-  // delay so the 3x3 layout has committed (the checks read real partitions).
+  // checks. No-op unless --parra-poc-tabops-selftest was supplied. Scheduled on
+  // a delay so the 3x3 layout has committed (the checks read real partitions).
   parra::MaybeRunTabOpsSelfTest();
 
   // Parra Phase 3 P3.1: fail-closed partition resolution and the OTR partition
-  // invariant. No-op unless --parra-poc-p31-selftest was supplied. Delayed for the
-  // same reason as above; it also needs the registry populated to ask about
+  // invariant. No-op unless --parra-poc-p31-selftest was supplied. Delayed for
+  // the same reason as above; it also needs the registry populated to ask about
   // environments that really exist.
   parra::MaybeRunP31SelfTest();
 
   // Parra Phase 3 P3.2: the Profile-scoped EnvironmentStore. No-op unless
-  // --parra-poc-p32-selftest was supplied. Delayed so the profile's services are
-  // fully built before the store is exercised.
+  // --parra-poc-p32-selftest was supplied. Delayed so the profile's services
+  // are fully built before the store is exercised.
   parra::MaybeRunP32SelfTest();
 
-  // Parra Phase 3 P3.2: open one tab in a STORED environment and stay open. No-op
-  // unless --parra-poc-p32-open was supplied. Used by the network isolation proof.
+  // Parra Phase 3 P3.2: open one tab in a STORED environment and stay open.
+  // No-op unless --parra-poc-p32-open was supplied. Used by the network
+  // isolation proof.
   parra::MaybeRunP32Open();
 
-  // Parra Phase 3 P3.3: open a real SECOND window parked on a named environment.
-  // No-op unless --parra-poc-open-window was supplied. Used to prove per-window
-  // environment state survives a restart (docs/parra/65).
+  // Parra Phase 3 P3.3: open a real SECOND window parked on a named
+  // environment. No-op unless --parra-poc-open-window was supplied. Used to
+  // prove per-window environment state survives a restart (docs/parra/65).
   parra::MaybeRunP32OpenWindow();
 
   // Parra Phase 3 P3.3: window lifetime stress. No-op unless
-  // --parra-poc-window-stress was supplied. Asserts that closing a window releases
-  // its WindowEnvironmentState (docs/parra/64).
+  // --parra-poc-window-stress was supplied. Asserts that closing a window
+  // releases its WindowEnvironmentState (docs/parra/64).
   parra::MaybeRunP32WindowStress();
 
   // Parra Phase 3 P3.3 T1: cross-window tab move, then restart. No-op unless
-  // --parra-poc-tab-move was supplied. Closes the gap in docs/parra/76 §A1 Q2/Q3,
-  // which had source analysis but no runtime evidence.
+  // --parra-poc-tab-move was supplied. Closes the gap in docs/parra/76 §A1
+  // Q2/Q3, which had source analysis but no runtime evidence.
   parra::MaybeRunTabMove();
 
-  // Parra Phase 3 P3.3 T2: tab inserted untagged, tagged afterwards. No-op unless
-  // --parra-poc-late-tag was supplied. Covers docs/parra/76 §A1 Q5, the one case
-  // where a correct build still writes a bare id=0 for a Parra tab.
+  // Parra Phase 3 P3.3 T2: tab inserted untagged, tagged afterwards. No-op
+  // unless
+  // --parra-poc-late-tag was supplied. Covers docs/parra/76 §A1 Q5, the one
+  // case where a correct build still writes a bare id=0 for a Parra tab.
   parra::MaybeRunLateTag();
+
+  // Parra Phase 3 P3.4 PoC-1: runtime host mapping update. No-op unless
+  // --parra-poc-host-mapping-update was supplied. Answers docs/parra/78 §2's
+  // blocking question with observed response bodies, not with call results.
+  parra::MaybeRunHostMappingPoc();
+
+  // Parra Phase 3 P3.4 PoC-2 scenario E: repoint a live environment's rules
+  // while its page stays open. No-op unless --parra-poc-page-state was
+  // supplied. The page-state assertions are made by
+  // parra-poc/devtools/verify-poc2-page-state.js, not here, so the code that
+  // changes routing cannot grade its own work.
+  parra::MaybeRunPageStatePoc();
 
   browser_process_->browser_policy_connector()->OnBrowserStarted();
 

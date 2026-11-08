@@ -164,8 +164,9 @@ void GetTimeDeltaFromDictString(const base::DictValue& args,
                                 std::string_view key,
                                 base::TimeDelta* out) {
   const std::string* value_string = args.FindString(key);
-  if (!value_string)
+  if (!value_string) {
     return;
+  }
   *out = base::TimeDeltaFromString(*value_string).value_or(*out);
 }
 
@@ -380,6 +381,18 @@ void HostResolver::SetRequestContext(URLRequestContext* request_context) {
   NOTREACHED();
 }
 
+bool HostResolver::SetHostMappingRules(std::string_view rules) {
+  // Parra P3.4 PoC-1. This is deliberately NOT NOTREACHED():
+  //
+  // A resolver with no mapping layer (the common case: the environment had no
+  // rules when its NetworkContext was created) genuinely cannot accept a rule
+  // update. Reporting that as false is the whole point -- the caller must be
+  // able to tell "applied" from "this NetworkContext has no place to put the
+  // rules". The alternative, silently succeeding, is exactly the "request
+  // accepted but not in effect" failure this PoC exists to expose.
+  return false;
+}
+
 HostResolverManager* HostResolver::GetManagerForTesting() {
   // Should be overridden in any HostResolver implementation where this method
   // may be called.
@@ -421,10 +434,37 @@ std::unique_ptr<HostResolver> HostResolver::CreateResolver(
     resolver = std::move(context_resolver);
   }
 
-  // Wrap in MappedHostResolver if needed.
-  if (!host_mapping_rules.empty()) {
+  // Parra P3.4 A1: wrap in MappedHostResolver UNCONDITIONALLY.
+  //
+  // The previous form wrapped only when `host_mapping_rules` was non-empty,
+  // which made the mapping layer's existence depend on the INITIAL rule string.
+  // For a NetworkContext created with no rules the layer was never inserted, so
+  // a later SetHostMappingRules() had no object to update and could only report
+  // failure. Measured in docs/parra/80 section 4: applied=false, "the
+  // HostResolver has no mapping layer (created with empty rules)".
+  //
+  // WHY UNCONDITIONAL IS SAFE:
+  //  * With an empty rule set HostMappingRules::RewriteUrl() matches nothing,
+  //  so
+  //    CreateRequest forwards the host unchanged. Resolution results and error
+  //    semantics are identical to not having the layer at all.
+  //  * The DNS cache lives on the inner ContextHostResolver, not on this layer,
+  //  so
+  //    caching behaviour is unchanged.
+  //  * While its rule set is empty the layer is a pure pass-through: no extra
+  //    query, no extra lookup, nothing added to or removed from the cache.
+  //  * The only cost is one virtual call per resolve, on a path that already
+  //    performs a network operation.
+  //
+  // Position is deliberate and matches the previous order: this sits ABOVE
+  // StaleHostResolver, so mapping happens before any staleness logic sees the
+  // host.
+  {
     auto remapped_resolver =
         std::make_unique<MappedHostResolver>(std::move(resolver));
+    // Assigning an empty string is a meaningful "no mapping" state, not a no-op
+    // to skip -- it is what makes the layer's behaviour well defined when there
+    // are no rules.
     remapped_resolver->SetRulesFromString(host_mapping_rules);
     resolver = std::move(remapped_resolver);
   }
@@ -552,10 +592,12 @@ AddressFamily HostResolver::DnsQueryTypeSetToAddressFamily(
   DCHECK(HasAddressType(dns_query_types));
   // If the set of query types contains A and AAAA, defer the choice of address
   // family. Otherwise, pick the corresponding address family.
-  if (dns_query_types.HasAll({DnsQueryType::A, DnsQueryType::AAAA}))
+  if (dns_query_types.HasAll({DnsQueryType::A, DnsQueryType::AAAA})) {
     return ADDRESS_FAMILY_UNSPECIFIED;
-  if (dns_query_types.Has(DnsQueryType::AAAA))
+  }
+  if (dns_query_types.Has(DnsQueryType::AAAA)) {
     return ADDRESS_FAMILY_IPV6;
+  }
   DCHECK(dns_query_types.Has(DnsQueryType::A));
   return ADDRESS_FAMILY_IPV4;
 }
@@ -564,12 +606,15 @@ AddressFamily HostResolver::DnsQueryTypeSetToAddressFamily(
 HostResolverFlags HostResolver::ParametersToHostResolverFlags(
     const ResolveHostParameters& parameters) {
   HostResolverFlags flags = 0;
-  if (parameters.include_canonical_name)
+  if (parameters.include_canonical_name) {
     flags |= HOST_RESOLVER_CANONNAME;
-  if (parameters.loopback_only)
+  }
+  if (parameters.loopback_only) {
     flags |= HOST_RESOLVER_LOOPBACK_ONLY;
-  if (parameters.avoid_multicast_resolution)
+  }
+  if (parameters.avoid_multicast_resolution) {
     flags |= HOST_RESOLVER_AVOID_MULTICAST;
+  }
   return flags;
 }
 

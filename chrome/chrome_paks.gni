@@ -264,6 +264,17 @@ template("chrome_extra_paks") {
         "$root_gen_dir/chrome/omnibox_everywhere_resources.pak",
         "$root_gen_dir/chrome/omnibox_popup_resources.pak",
         "$root_gen_dir/chrome/organizer_panel_resources.pak",
+        # Parra: chrome://parra environment management page.
+        #
+        # THIS LIST, not chrome/browser/resources/BUILD.gn, is what actually packs a
+        # WebUI pak into resources.pak. A missing entry here is invisible at build
+        # time: parra_resources.pak is still produced, the WebUIController is still
+        # constructed, and the data source is still registered -- but the resource ids
+        # it points at exist in no loaded pak, so the source yields no bytes for every
+        # path. web_ui_url_loader_factory.cc converts "no bytes" into net::ERR_FAILED,
+        # so the tab lands on chrome-error:// while the browser log says the page
+        # loaded. That is exactly the failure this entry fixes.
+        "$root_gen_dir/chrome/parra_resources.pak",
         "$root_gen_dir/chrome/password_manager_resources.pak",
         "$root_gen_dir/chrome/profile_internals_resources.pak",
         "$root_gen_dir/chrome/search_engine_choice_resources.pak",

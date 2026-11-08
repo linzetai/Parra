@@ -232,6 +232,9 @@ class TabDragController : public views::WidgetObserver,
   const TabDragContext* GetAttachedContext() const override;
 
  private:
+  class ParraDragTransaction;
+  std::unique_ptr<ParraDragTransaction> parra_drag_transaction_;
+  base::CallbackListSubscription parra_source_close_subscription_;
   friend class TabDragControllerTest;
 
   class SourceTabStripEmptinessTracker;
@@ -648,6 +651,8 @@ class TabDragController : public views::WidgetObserver,
   // What should occur during ContinueDragging when a tab is attempted to be
   // detached.
   DetachBehavior detach_behavior_;
+  // A browser-level drag released away from an acceptable target is canceled.
+  bool parra_blocked_drop_ = false;
 
   // Last location used in screen coordinates.
   gfx::Point last_point_in_screen_ = gfx::Point();

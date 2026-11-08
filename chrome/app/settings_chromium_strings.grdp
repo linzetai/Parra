@@ -18,11 +18,11 @@
       </message>
     </then>
     <else>
-      <message name="IDS_SETTINGS_ABOUT_PROGRAM" desc="Menu title for the About Chromium page.">
-        About Chromium
+      <message name="IDS_SETTINGS_ABOUT_PROGRAM" desc="Menu title for the About Parra page.">
+        About Parra
       </message>
-      <message name="IDS_SETTINGS_GET_HELP_USING_CHROME" desc="Text of the button which takes the user to the Chrome help page.">
-        Get help with Chromium
+      <message name="IDS_SETTINGS_GET_HELP_USING_CHROME" desc="Text of the button which takes the user to the Parra help page.">
+        Get help with Parra
       </message>
     </else>
   </if>

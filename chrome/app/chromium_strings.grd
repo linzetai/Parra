@@ -294,10 +294,10 @@ If you update this file, be sure also to update google_chrome_strings.grd. -->
         </then>
         <else>
           <message name="IDS_PRODUCT_NAME" desc="The Chrome application name" translateable="false">
-            Chromium
+            Parra
           </message>
           <message name="IDS_SHORT_PRODUCT_NAME" desc="The Chrome application short name." translateable="false">
-            Chromium
+            Parra
           </message>
         </else>
       </if>
@@ -452,7 +452,7 @@ New bookmarks can’t be saved in your account until you delete some. If you sig
           </then>
           <else>
             <message name="IDS_BROWSER_WINDOW_TITLE_FORMAT" desc="The format for titles displayed in tabs and popup windows">
-              <ph name="PAGE_TITLE">$1<ex>Google</ex></ph> - Chromium
+              <ph name="PAGE_TITLE">$1<ex>Google</ex></ph> - Parra
             </message>
           </else>
         </if>
@@ -491,7 +491,7 @@ New bookmarks can’t be saved in your account until you delete some. If you sig
         </then>
         <else>
           <message name="IDS_ACCESSIBLE_BROWSER_WINDOW_TITLE_FORMAT" desc="The format for the accessible name of a tabbed browser window">
-            <ph name="PAGE_TITLE">$1<ex>Google</ex></ph> - Chromium
+            <ph name="PAGE_TITLE">$1<ex>Google</ex></ph> - Parra
           </message>
         </else>
       </if>

@@ -70,6 +70,10 @@
   width: var(--cr-icon-size);
 }
 
+#about-menu > img {
+  margin-inline-end: 16px;
+}
+
 .menu-separator {
   /* Per bettes@, this is different from the other separator lines. */
   border-bottom: 1px solid rgba(0, 0, 0, 0.08);

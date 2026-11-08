@@ -5,6 +5,7 @@
 #include "chrome/browser/favicon/favicon_utils.h"
 
 #include "base/hash/sha1.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -45,8 +46,9 @@ constexpr SkColor kFallbackIconLetterColor = SK_ColorWHITE;
 
 // Returns a color based on the hash of |icon_url|'s origin.
 SkColor ComputeBackgroundColorForUrl(const GURL& icon_url) {
-  if (!icon_url.is_valid())
+  if (!icon_url.is_valid()) {
     return SK_ColorGRAY;
+  }
 
   base::SHA1Digest hash = base::SHA1Hash(
       base::as_byte_span(icon_url.DeprecatedGetOriginAsURL().spec()));
@@ -66,16 +68,16 @@ gfx::Image GetDefaultFaviconForColorScheme(bool is_dark) {
 void CreateContentFaviconDriverForWebContents(
     content::WebContents* web_contents) {
   CHECK(web_contents, base::NotFatalUntil::M161);
-  if (ContentFaviconDriver::FromWebContents(web_contents))
+  if (ContentFaviconDriver::FromWebContents(web_contents)) {
     return;
+  }
 
   Profile* original_profile =
       Profile::FromBrowserContext(web_contents->GetBrowserContext())
           ->GetOriginalProfile();
   return ContentFaviconDriver::CreateForWebContents(
-      web_contents,
-      FaviconServiceFactory::GetForProfile(original_profile,
-                                           ServiceAccessType::IMPLICIT_ACCESS));
+      web_contents, FaviconServiceFactory::GetForProfile(
+                        original_profile, ServiceAccessType::IMPLICIT_ACCESS));
 }
 
 SkBitmap GenerateMonogramFavicon(GURL url, int icon_size, int circle_size) {
@@ -132,8 +134,9 @@ ui::ImageModel GetDefaultFaviconModel(
 void SaveFaviconEvenIfInIncognito(content::WebContents* contents) {
   content::NavigationEntry* entry =
       contents->GetController().GetLastCommittedEntry();
-  if (!entry)
+  if (!entry) {
     return;
+  }
 
   Profile* original_profile =
       Profile::FromBrowserContext(contents->GetBrowserContext())
@@ -141,8 +144,9 @@ void SaveFaviconEvenIfInIncognito(content::WebContents* contents) {
   favicon::FaviconService* favicon_service =
       FaviconServiceFactory::GetForProfile(original_profile,
                                            ServiceAccessType::EXPLICIT_ACCESS);
-  if (!favicon_service)
+  if (!favicon_service) {
     return;
+  }
 
   // Make sure the page is in history, otherwise adding the favicon does
   // nothing.
@@ -164,7 +168,8 @@ bool ShouldThemifyFavicon(GURL url) {
   if (!url.SchemeIs(content::kChromeUIScheme)) {
     return false;
   }
-  return url.host() != chrome::kChromeUIAppLauncherPageHost &&
+  return url.host() != chrome::kChromeUIParraHost &&
+         url.host() != chrome::kChromeUIAppLauncherPageHost &&
          url.host() != chrome::kChromeUIHelpHost &&
          url.host() != chrome::kChromeUIVersionHost &&
          url.host() != chrome::kChromeUINetExportHost &&
@@ -176,6 +181,16 @@ bool ShouldThemifyFavicon(GURL url) {
 bool ShouldThemifyFaviconForEntry(content::NavigationEntry* entry) {
   const GURL& virtual_url = entry->GetVirtualURL();
   const GURL& actual_url = entry->GetURL();
+
+#if !BUILDFLAG(GOOGLE_CHROME_BRANDING) && \
+    !BUILDFLAG(GOOGLE_CHROME_FOR_TESTING_BRANDING)
+  // Parra's two-color brand mark must remain intact in the tab strip.
+  if (actual_url.SchemeIs(content::kChromeUIScheme) &&
+      (actual_url.host() == chrome::kChromeUINewTabPageHost ||
+       actual_url.host() == chrome::kChromeUINewTabHost)) {
+    return false;
+  }
+#endif
 
   if (ShouldThemifyFavicon(virtual_url)) {
     return true;

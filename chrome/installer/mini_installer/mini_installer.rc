@@ -29,7 +29,7 @@ LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 
 // Icon with lowest ID value placed first to ensure application icon
 // remains consistent on all systems.
-IDI_MINI_INSTALLER      ICON                    "mini_installer.ico"
+IDI_MINI_INSTALLER      ICON                    "..\\..\\app\\theme\\parra\\parra.ico"
 
 #ifdef APSTUDIO_INVOKED
 /////////////////////////////////////////////////////////////////////////////

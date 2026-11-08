@@ -68,12 +68,12 @@ const wchar_t kCleanupRegistryKey[] = L"Software\\Chrome for Testing";
 #else
 // The path to the key containing each app's Clients registry key.
 // No trailing slash on this one because the app's GUID is not appended.
-const wchar_t kClientsKeyBase[] = L"Software\\Chromium";
+const wchar_t kClientsKeyBase[] = L"Software\\Parra";
 // The path to the key containing each app's Client State registry key.
 // No trailing slash on this one because the app's GUID is not appended.
-const wchar_t kClientStateKeyBase[] = L"Software\\Chromium";
+const wchar_t kClientStateKeyBase[] = L"Software\\Parra";
 // The path to the key in which kCleanupRegistryValue is found.
-const wchar_t kCleanupRegistryKey[] = L"Software\\Chromium";
+const wchar_t kCleanupRegistryKey[] = L"Software\\Parra";
 #endif
 
 }  // namespace mini_installer

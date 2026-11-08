@@ -865,7 +865,7 @@
 <translation id="1651609627703324721">此标签页正在向头戴设备显示 VR 内容</translation>
 <translation id="1652281434788353738">沉思</translation>
 <translation id="1652326691684645429">启用“附近分享”功能</translation>
-<translation id="1652862280638399816">若要将密码管理工具与 macOS 钥匙串搭配使用，请重新启动 Chromium 并允许访问钥匙串。您的标签页会在重新启动后重新打开。</translation>
+<translation id="1652862280638399816">若要将密码管理工具与 macOS 钥匙串搭配使用，请重新启动 Parra 并允许访问钥匙串。您的标签页会在重新启动后重新打开。</translation>
 <translation id="165448107578581061">Gemini 正在处理您的任务…</translation>
 <translation id="1654580009054503925">不得显示请求</translation>
 <translation id="1656528038316521561">背景不透明度</translation>
@@ -1389,7 +1389,7 @@
 <translation id="2059913712424898428">时区</translation>
 <translation id="2060375639911876205">移除 eSIM 卡配置文件</translation>
 <translation id="2061366302742593739">没有可显示的内容</translation>
-<translation id="2061589908388230480">如果 Chromium 发现您的密码在公开数据泄露事件中外泄，Google 密码管理工具可能会在您登录时建议更改密码。<ph name="BEGIN_LINK" />详细了解自动更改密码<ph name="END_LINK" /></translation>
+<translation id="2061589908388230480">如果 Parra 发现您的密码在公开数据泄露事件中外泄，Google 密码管理工具可能会在您登录时建议更改密码。<ph name="BEGIN_LINK" />详细了解自动更改密码<ph name="END_LINK" /></translation>
 <translation id="2062354623176996748">如果您使用无痕式窗口浏览网页，系统便不会保存您的浏览记录</translation>
 <translation id="206308717637808771">关闭所有窗口时删除数据。在数据处理方面，与您正在查看的网站相同</translation>
 <translation id="2066700471214517561">波束成形麦克风，让 Chromebook 使用者的声音更清晰。</translation>
@@ -1813,7 +1813,7 @@
 <translation id="2399699884460174994">通知已开启</translation>
 <translation id="2399939490305346086">安全密钥登录数据</translation>
 <translation id="240006516586367791">媒体控件</translation>
-<translation id="2405057019351885107">助您事半功倍的浏览器</translation>
+<translation id="2405057019351885107">欢迎使用 Parra</translation>
 <translation id="2405887402346713222">设备和组件序列号</translation>
 <translation id="2406153734066939945">删除这份个人资料及其数据？</translation>
 <translation id="2406942743794219791">确认要使用的默认搜索引擎</translation>
@@ -2145,7 +2145,7 @@
 <translation id="2641174089709899456">温馨提示：AI 增强浏览体验，尽在掌中</translation>
 <translation id="2642111877055905627">足球</translation>
 <translation id="2642206811783203764">始终允许在 <ph name="SITE_NAME" /> 上运行</translation>
-<translation id="2643379881528582459">如果 Chromium 发现您的密码在公开数据泄露事件中外泄，可能会在您登录时建议更改密码</translation>
+<translation id="2643379881528582459">如果 Parra 发现您的密码在公开数据泄露事件中外泄，可能会在您登录时建议更改密码</translation>
 <translation id="2643698698624765890">您可以通过点击“窗口”菜单中的“扩展程序”，管理您的扩展程序。</translation>
 <translation id="2643967675101729581">结束日期：</translation>
 <translation id="2645047101481282803">您的设备由 <ph name="PROFILE_NAME" /> 管理</translation>
@@ -2842,7 +2842,7 @@
 <translation id="3152545926232662879">已忽略：</translation>
 <translation id="3152596030350326139">水平显示标签页</translation>
 <translation id="3154754096046236400">个人使用场景</translation>
-<translation id="3155163173539279776">重新启动 Chromium</translation>
+<translation id="3155163173539279776">重新启动 Parra</translation>
 <translation id="3155394504825881014">将标签页分组转换为书签文件夹</translation>
 <translation id="3156511682997763015">快进 10 秒</translation>
 <translation id="3157330780336267229">如需分享或加入标签页分组，您需要开启同步功能</translation>
@@ -4425,7 +4425,7 @@
 <translation id="4332976768901252016">设置“家长控制”功能</translation>
 <translation id="4334768748331667190">系统不会再向您显示<ph name="MODULE_NAME" /></translation>
 <translation id="4335835283689002019">“安全浏览”功能已关闭</translation>
-<translation id="4336967529148557673">您需要先登录，然后 Chromium 才能完成此任务</translation>
+<translation id="4336967529148557673">您需要先登录，然后 Parra 才能完成此任务</translation>
 <translation id="433776600277609450">添加过滤条件</translation>
 <translation id="4338363401382232853">分屏窗口建议</translation>
 <translation id="4339203724549370495">卸载应用</translation>
@@ -4516,7 +4516,7 @@
 <translation id="4401912261345737180">使用代码连接后即可投放</translation>
 <translation id="4403012369005671154">语音转文字</translation>
 <translation id="4403775189117163360">另选一个文件夹</translation>
-<translation id="440411460180511551">如果 Chromium 发现您的某个密码在公开数据泄露事件中外泄，Google 密码管理工具可能会在您登录时建议更改密码。</translation>
+<translation id="440411460180511551">如果 Parra 发现您的某个密码在公开数据泄露事件中外泄，Google 密码管理工具可能会在您登录时建议更改密码。</translation>
 <translation id="4404843640767531781">“<ph name="APP_NAME" />”已被您的家长禁用。请让您的家长授权您使用此应用。</translation>
 <translation id="4405117686468554883">*.jpeg、*.jpg、*.png</translation>
 <translation id="4405580203042711503">在下方新增标签页</translation>
@@ -5194,7 +5194,7 @@
 <translation id="4918762404810341788">复制并打开</translation>
 <translation id="4918844574251943176">已复制图片</translation>
 <translation id="4921348630401250116">文字转语音</translation>
-<translation id="4922104989726031751">若要在您的操作系统中使用密码管理工具，请重新启动 Chromium 并允许使用计算机的密码管理工具。待 Chromium 重新启动后，您的标签页会自动重新打开。</translation>
+<translation id="4922104989726031751">若要在您的操作系统中使用密码管理工具，请重新启动 Parra 并允许使用计算机的密码管理工具。待 Parra 重新启动后，您的标签页会自动重新打开。</translation>
 <translation id="4923561999941435531">{0,plural, =1{将 1 项内容保存在账号中}other{将 # 项内容保存在账号中}}</translation>
 <translation id="4923977675318667854">显示标签页分组</translation>
 <translation id="4924002401726507608">提交反馈</translation>
@@ -7425,7 +7425,7 @@
 <translation id="6677527809400770913">已将手势“<ph name="GESTURE" />”分配给“<ph name="ACTION" />”</translation>
 <translation id="6678604587151240716">海中巨浪翻滚，远处背景是一片陆地。天空暗沉，地平线上隐约透出橙色光芒。</translation>
 <translation id="6678717876183468697">查询网址</translation>
-<translation id="6678974601734442817">Chromium 需要您协助更改密码</translation>
+<translation id="6678974601734442817">Parra 需要您协助更改密码</translation>
 <translation id="6679947539429331601">隐藏 12 小时</translation>
 <translation id="6680650203439190394">语速</translation>
 <translation id="6683022854667115063">头戴式耳机</translation>
@@ -8924,7 +8924,7 @@
 <translation id="7807711621188256451">始终允许 <ph name="HOST" /> 使用您的摄像头</translation>
 <translation id="7810202088502699111">已拦截此网页上的弹出式窗口。</translation>
 <translation id="7810367892333449285">所输入代码的格式应为：<ph name="LPA_0" />$<ph name="LPA_1" />SM-DP+ 地址<ph name="LPA_2" />$<ph name="LPA_3" />可选匹配 ID<ph name="LPA_4" /></translation>
-<translation id="7810951505946824824">Chrome 的诞生离不开 Chromium 开源项目以及其他<ph name="BEGIN_HIGHLIGHT" />开源<ph name="END_HIGHLIGHT" />软件。</translation>
+<translation id="7810951505946824824">Parra 基于 Chromium 开源项目以及其他<ph name="BEGIN_HIGHLIGHT" />开源<ph name="END_HIGHLIGHT" />软件。</translation>
 <translation id="7811263553491007091">请重试，或从下面之前生成的主题中选择一个。</translation>
 <translation id="7811926937048662341">右键点击此处，然后选择“垂直显示标签页”</translation>
 <translation id="7811986034759500329">在系统设置中设置</translation>
@@ -10085,7 +10085,7 @@
 <translation id="8687774873995698516">始终禁止 <ph name="HOST" /> 使用标识符播放受保护内容</translation>
 <translation id="8688672835843460752">可用</translation>
 <translation id="8689811383248488428">拒绝并关闭个人资料</translation>
-<translation id="8689957514193802371">让 Chromium 自动更改 <ph name="WEBSITE" /> 的密码</translation>
+<translation id="8689957514193802371">让 Parra 自动更改 <ph name="WEBSITE" /> 的密码</translation>
 <translation id="8689998525144040851">100</translation>
 <translation id="8690129572193755009">网站可以请求处理协议</translation>
 <translation id="869144235543261764">此标签页正在“画中画”模式中播放视频</translation>

@@ -9,6 +9,7 @@
 #include "base/version_info/channel.h"
 #include "build/branding_buildflags.h"
 #include "chrome/common/channel_info.h"
+#include "chrome/grit/chrome_unscaled_resources.h"
 #include "chrome/grit/theme_resources.h"
 
 namespace webui {
@@ -33,6 +34,10 @@ int CurrentChannelLogoResourceId() {
       [[fallthrough]];
 #endif
     case version_info::Channel::UNKNOWN:
+#if !BUILDFLAG(GOOGLE_CHROME_BRANDING) && \
+    !BUILDFLAG(GOOGLE_CHROME_FOR_TESTING_BRANDING)
+      return IDR_PARRA_BRAND_ICON;
+#endif
       return IDR_PRODUCT_LOGO_32;
   }
   return -1;

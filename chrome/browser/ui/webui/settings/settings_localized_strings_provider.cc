@@ -551,6 +551,10 @@ void AddAiStrings(content::WebUIDataSource* html_source) {
                                   features::IsWebuiRefresh2026Enabled()
                                       ? IDS_SETTINGS_AI_PAGE_TITLE
                                       : IDS_SETTINGS_AI_INNOVATIONS_PAGE_TITLE);
+#if !BUILDFLAG(GOOGLE_CHROME_BRANDING) && \
+    !BUILDFLAG(GOOGLE_CHROME_FOR_TESTING_BRANDING)
+  html_source->AddString("aiPageTitle", u"AI 功能");
+#endif
   html_source->AddLocalizedString(
       "aiSuggestionsConsider1",
       contextual_cueing::kUsePrivateAi.Get()
